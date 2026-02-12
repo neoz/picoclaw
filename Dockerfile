@@ -15,12 +15,17 @@ FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata
 
+RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
+
 COPY --from=builder /bin/picoclaw /usr/local/bin/picoclaw
 
-RUN mkdir -p /root/.picoclaw/workspace/memory \
-             /root/.picoclaw/workspace/skills
+RUN mkdir -p /home/picoclaw/.picoclaw/workspace/memory \
+             /home/picoclaw/.picoclaw/workspace/skills \
+    && chown -R picoclaw:picoclaw /home/picoclaw/.picoclaw
 
-COPY skills/ /root/.picoclaw/workspace/skills/
+COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
+
+USER picoclaw
 
 EXPOSE 18790
 

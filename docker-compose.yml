@@ -8,8 +8,8 @@ services:
     ports:
       - "18790:18790"
     volumes:
-      - ./config.json:/root/.picoclaw/config.json:ro
-      - picoclaw-workspace:/root/.picoclaw/workspace
+      - ./config.json:/home/picoclaw/.picoclaw/config.json:ro
+      - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
     environment:
       - TZ=Asia/Ho_Chi_Minh
       # Override config via env vars (optional):

@@ -47,8 +47,8 @@ docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p "$PORT:$PORT" \
-    -v "$CONFIG_FILE:/root/.picoclaw/config.json:ro" \
-    -v "$VOLUME_NAME:/root/.picoclaw/workspace" \
+    -v "$CONFIG_FILE:/home/picoclaw/.picoclaw/config.json:ro" \
+    -v "$VOLUME_NAME:/home/picoclaw/.picoclaw/workspace" \
     -e TZ=Asia/Ho_Chi_Minh \
     "$IMAGE_NAME"
 
