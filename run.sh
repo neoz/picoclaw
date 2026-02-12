@@ -23,8 +23,16 @@ fi
 
 # Remove existing container if it exists
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "Stopping existing container..."
+    docker stop "$CONTAINER_NAME"
     echo "Removing existing container..."
     docker rm -f "$CONTAINER_NAME"
+fi
+
+# if force, remove remove existing volume
+if [ "$FORCE" = true ] && docker volume ls --format '{{.Name}}' | grep -q "^${VOLUME_NAME}$"; then
+    echo "Removing existing volume..."
+    docker volume rm "$VOLUME_NAME"
 fi
 
 # Create volume if it doesn't exist
