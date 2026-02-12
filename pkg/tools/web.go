@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -190,6 +191,11 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("missing domain in URL")
 	}
 
+	hostname := parsedURL.Hostname()
+	if isPrivateHost(hostname) {
+		return "", fmt.Errorf("requests to private/internal addresses are not allowed")
+	}
+
 	maxChars := t.maxChars
 	if mc, ok := args["maxChars"].(float64); ok {
 		if int(mc) > 100 {
@@ -211,10 +217,14 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 			IdleConnTimeout:     30 * time.Second,
 			DisableCompression:  false,
 			TLSHandshakeTimeout: 15 * time.Second,
+			DialContext:         ssrfSafeDialContext,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("stopped after 5 redirects")
+			}
+			if req.URL != nil && isPrivateHost(req.URL.Hostname()) {
+				return fmt.Errorf("redirect to private/internal address is not allowed")
 			}
 			return nil
 		},
@@ -270,6 +280,73 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]interface{})
 
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
+}
+
+// isPrivateHost checks if a hostname resolves to or is a private/internal IP address.
+func isPrivateHost(host string) bool {
+	ip := net.ParseIP(host)
+	if ip != nil {
+		return isPrivateIP(ip)
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []struct {
+		network *net.IPNet
+	}{
+		{parseCIDR("127.0.0.0/8")},
+		{parseCIDR("10.0.0.0/8")},
+		{parseCIDR("172.16.0.0/12")},
+		{parseCIDR("192.168.0.0/16")},
+		{parseCIDR("169.254.0.0/16")},
+		{parseCIDR("::1/128")},
+		{parseCIDR("fc00::/7")},
+		{parseCIDR("fe80::/10")},
+	}
+	for _, r := range privateRanges {
+		if r.network.Contains(ip) {
+			return true
+		}
+	}
+	return ip.IsUnspecified()
+}
+
+func parseCIDR(s string) *net.IPNet {
+	_, network, _ := net.ParseCIDR(s)
+	return network
+}
+
+// ssrfSafeDialContext prevents connections to private/internal IP addresses
+// after DNS resolution, protecting against DNS rebinding attacks.
+func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ip := range ips {
+		if isPrivateIP(ip.IP) {
+			return nil, fmt.Errorf("connections to private/internal addresses are not allowed")
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
 func (t *WebFetchTool) extractText(htmlContent string) string {
