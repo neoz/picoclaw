@@ -1,0 +1,6 @@
+build/
+.git/
+*.exe
+*.md
+LICENSE
+assets/
