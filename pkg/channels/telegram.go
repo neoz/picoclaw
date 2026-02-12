@@ -24,7 +24,7 @@ type TelegramChannel struct {
 	*BaseChannel
 	bot          *tgbotapi.BotAPI
 	config       config.TelegramConfig
-	chatIDs      map[string]int64
+	chatIDs      sync.Map // string -> int64
 	updates      tgbotapi.UpdatesChannel
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
@@ -40,13 +40,10 @@ func NewTelegramChannel(cfg config.TelegramConfig, bus *bus.MessageBus) (*Telegr
 	base := NewBaseChannel("telegram", cfg, bus, cfg.AllowFrom)
 
 	return &TelegramChannel{
-		BaseChannel:  base,
-		bot:          bot,
-		config:       cfg,
-		chatIDs:      make(map[string]int64),
-		transcriber:  nil,
-		placeholders: sync.Map{},
-		stopThinking: sync.Map{},
+		BaseChannel: base,
+		bot:         bot,
+		config:      cfg,
+		transcriber: nil,
 	}, nil
 }
 
@@ -164,7 +161,7 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	}
 
 	chatID := message.Chat.ID
-	c.chatIDs[senderID] = chatID
+	c.chatIDs.Store(senderID, chatID)
 
 	content := ""
 	mediaPaths := []string{}
