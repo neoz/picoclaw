@@ -307,7 +307,6 @@ func (c *TelegramChannel) downloadFileWithInfo(file *tgbotapi.File, ext string) 
 	}
 
 	url := file.Link(c.bot.Token)
-	log.Printf("File URL: %s", url)
 
 	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
@@ -370,7 +369,6 @@ func (c *TelegramChannel) downloadFile(fileID, ext string) string {
 	}
 
 	url := file.Link(c.bot.Token)
-	log.Printf("File URL: %s", url)
 
 	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
