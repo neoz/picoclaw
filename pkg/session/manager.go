@@ -45,13 +45,17 @@ func (sm *SessionManager) GetOrCreate(key string) *Session {
 
 	if !ok {
 		sm.mu.Lock()
-		session = &Session{
-			Key:      key,
-			Messages: []providers.Message{},
-			Created:  time.Now(),
-			Updated:  time.Now(),
+		// Double-check after acquiring write lock
+		session, ok = sm.sessions[key]
+		if !ok {
+			session = &Session{
+				Key:      key,
+				Messages: []providers.Message{},
+				Created:  time.Now(),
+				Updated:  time.Now(),
+			}
+			sm.sessions[key] = session
 		}
-		sm.sessions[key] = session
 		sm.mu.Unlock()
 	}
 
