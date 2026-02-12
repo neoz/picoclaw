@@ -55,9 +55,9 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	os.MkdirAll(workspace, 0755)
 
 	toolsRegistry := tools.NewToolRegistry()
-	toolsRegistry.Register(&tools.ReadFileTool{})
-	toolsRegistry.Register(&tools.WriteFileTool{})
-	toolsRegistry.Register(&tools.ListDirTool{})
+	toolsRegistry.Register(tools.NewReadFileTool(workspace))
+	toolsRegistry.Register(tools.NewWriteFileTool(workspace))
+	toolsRegistry.Register(tools.NewListDirTool(workspace))
 	toolsRegistry.Register(tools.NewExecTool(workspace))
 
 	braveAPIKey := cfg.Tools.Web.Search.APIKey
