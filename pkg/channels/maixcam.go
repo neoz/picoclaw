@@ -18,7 +18,6 @@ type MaixCamChannel struct {
 	listener   net.Listener
 	clients    map[net.Conn]bool
 	clientsMux sync.RWMutex
-	running    bool
 }
 
 type MaixCamMessage struct {
@@ -35,7 +34,6 @@ func NewMaixCamChannel(cfg config.MaixCamConfig, bus *bus.MessageBus) (*MaixCamC
 		BaseChannel: base,
 		config:      cfg,
 		clients:     make(map[net.Conn]bool),
-		running:     false,
 	}, nil
 }
 
@@ -72,7 +70,7 @@ func (c *MaixCamChannel) acceptConnections(ctx context.Context) {
 		default:
 			conn, err := c.listener.Accept()
 			if err != nil {
-				if c.running {
+				if c.IsRunning() {
 					logger.ErrorCF("maixcam", "Failed to accept connection", map[string]interface{}{
 						"error": err.Error(),
 					})
