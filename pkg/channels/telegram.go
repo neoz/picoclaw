@@ -29,6 +29,8 @@ type TelegramChannel struct {
 	updates      tgbotapi.UpdatesChannel
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
+	botUsername  string
+	botID        int64
 }
 
 func NewTelegramChannel(cfg config.TelegramConfig, bus *bus.MessageBus) (*TelegramChannel, error) {
@@ -66,6 +68,8 @@ func (c *TelegramChannel) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get bot info: %w", err)
 	}
+	c.botUsername = botInfo.UserName
+	c.botID = botInfo.ID
 	log.Printf("Telegram bot @%s connected", botInfo.UserName)
 
 	go func() {
@@ -263,6 +267,35 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	if !c.IsAllowed(senderID) {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
 		return
+	}
+
+	// In groups, only respond if bot is @mentioned or message is a reply to the bot
+	isGroup := message.Chat.Type != "private"
+	if isGroup {
+		mentioned := false
+		for _, e := range message.Entities {
+			if e.Type == "mention" {
+				name := message.Text[e.Offset+1 : e.Offset+e.Length] // skip @
+				if strings.EqualFold(name, c.botUsername) {
+					mentioned = true
+					break
+				}
+			}
+		}
+		isReplyToBot := message.ReplyToMessage != nil &&
+			message.ReplyToMessage.From != nil &&
+			message.ReplyToMessage.From.ID == c.botID
+
+		if !mentioned && !isReplyToBot {
+			return
+		}
+
+		// Strip @botname from content
+		content = strings.ReplaceAll(content, "@"+c.botUsername, "")
+		content = strings.TrimSpace(content)
+		if content == "" {
+			content = "[empty message]"
+		}
 	}
 
 	// Typing indicator + placeholder message (edited with final response)
