@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -30,6 +31,7 @@ type TelegramChannel struct {
 	updates      tgbotapi.UpdatesChannel
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
+	tempAllows   sync.Map // "chatID:username" -> time.Time (expiry)
 	botUsername  string
 	botID        int64
 }
@@ -280,6 +282,14 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
 
+	// Check one-time temp allow for non-allowed users in groups
+	if !allowed && isGroup {
+		if c.consumeTempAllow(chatID, user) {
+			allowed = true
+			log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
+		}
+	}
+
 	if !allowed {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
 		if isGroup {
@@ -293,7 +303,7 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 		mentioned := false
 		for _, e := range message.Entities {
 			if e.Type == "mention" {
-				name := message.Text[e.Offset+1 : e.Offset+e.Length] // skip @
+				name := extractEntityText(message.Text, e.Offset+1, e.Length-1)
 				if strings.EqualFold(name, c.botUsername) {
 					mentioned = true
 					break
@@ -315,6 +325,11 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 		if content == "" {
 			content = "[empty message]"
 		}
+	}
+
+	// Grant one-time temp allow for other users mentioned in this message
+	if isGroup {
+		c.grantTempAllows(chatID, message)
 	}
 
 	// React to sender message to acknowledge receipt
@@ -435,6 +450,53 @@ func (c *TelegramChannel) downloadFile(fileID, ext string) string {
 	return localPath
 }
 
+const tempAllowTTL = 30 * time.Minute
+
+// grantTempAllows extracts @mentioned users from an allowed user's message
+// and grants them one-time access to interact with the bot in this chat.
+func (c *TelegramChannel) grantTempAllows(chatID int64, message *tgbotapi.Message) {
+	for _, e := range message.Entities {
+		switch e.Type {
+		case "mention":
+			name := extractEntityText(message.Text, e.Offset+1, e.Length-1)
+			if strings.EqualFold(name, c.botUsername) {
+				continue
+			}
+			key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(name))
+			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
+			log.Printf("Temp allow granted for @%s in chat %d", name, chatID)
+		case "text_mention":
+			if e.User == nil {
+				continue
+			}
+			key := fmt.Sprintf("%d:%d", chatID, e.User.ID)
+			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
+			log.Printf("Temp allow granted for user %d in chat %d", e.User.ID, chatID)
+		}
+	}
+}
+
+// consumeTempAllow checks if a user has a one-time temp allow and consumes it.
+func (c *TelegramChannel) consumeTempAllow(chatID int64, user *tgbotapi.User) bool {
+	// Try by username first
+	if user.UserName != "" {
+		key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(user.UserName))
+		if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+			if time.Now().Before(expiry.(time.Time)) {
+				return true
+			}
+		}
+	}
+	// Try by user ID (for text_mention grants)
+	key := fmt.Sprintf("%d:%d", chatID, user.ID)
+	if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+		if time.Now().Before(expiry.(time.Time)) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *TelegramChannel) publishObserveOnly(senderID string, chatID int64, messageID int, user *tgbotapi.User, content string, mediaPaths []string) {
 	chatIDStr := fmt.Sprintf("%d", chatID)
 	sessionKey := fmt.Sprintf("%s:%s", c.name, chatIDStr)
@@ -473,6 +535,16 @@ func parseChatID(chatIDStr string) (int64, error) {
 	var id int64
 	_, err := fmt.Sscanf(chatIDStr, "%d", &id)
 	return id, err
+}
+
+// extractEntityText extracts text from a Telegram message using UTF-16 offsets.
+// Telegram entity Offset/Length are in UTF-16 code units, not UTF-8 bytes.
+func extractEntityText(text string, offset, length int) string {
+	units := utf16.Encode([]rune(text))
+	if offset+length > len(units) {
+		return ""
+	}
+	return string(utf16.Decode(units[offset : offset+length]))
 }
 
 func truncateString(s string, maxLen int) string {
