@@ -23,6 +23,7 @@ RUN mkdir -p /home/picoclaw/.picoclaw/workspace/memory \
              /home/picoclaw/.picoclaw/workspace/skills \
              /home/picoclaw/.picoclaw/workspace/sessions \
              /home/picoclaw/.picoclaw/workspace/cron \
+             /home/picoclaw/.picoclaw/workspace/stm \
     && chown -R picoclaw:picoclaw /home/picoclaw/.picoclaw
 
 COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
