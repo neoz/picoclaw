@@ -282,19 +282,8 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
 
-	// Check one-time temp allow for non-allowed users in groups
-	if !allowed && isGroup {
-		if c.consumeTempAllow(chatID, user) {
-			allowed = true
-			log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
-		}
-	}
-
-	if !allowed {
+	if !allowed && !isGroup {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
-		if isGroup {
-			c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
-		}
 		return
 	}
 
@@ -317,6 +306,18 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 		if !mentioned && !isReplyToBot {
 			c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
 			return
+		}
+
+		// Bot is mentioned or replied to - check temp allow for non-allowed users
+		if !allowed {
+			if c.consumeTempAllow(chatID, user) {
+				allowed = true
+				log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
+			} else {
+				log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
+				c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
+				return
+			}
 		}
 
 		// Strip @botname from content
