@@ -138,7 +138,11 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	// Handle reaction messages
 	if msg.Metadata["type"] == "reaction" {
 		if msgID, err := strconv.Atoi(msg.Metadata["message_id"]); err == nil {
-			c.reactToMessage(chatID, msgID)
+			emoji := msg.Metadata["emoji"]
+			if emoji == "" {
+				emoji = "\U0001F440"
+			}
+			c.reactToMessage(chatID, msgID, emoji)
 		}
 		return nil
 	}
@@ -314,7 +318,7 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	}
 
 	// React to sender message to acknowledge receipt
-	c.reactToMessage(chatID, message.MessageID)
+	c.reactToMessage(chatID, message.MessageID, "\U0001F440")
 
 	// Typing indicator + placeholder message (edited with final response)
 	c.sendWithRetry(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
@@ -453,12 +457,12 @@ func (c *TelegramChannel) publishObserveOnly(senderID string, chatID int64, mess
 	})
 }
 
-func (c *TelegramChannel) reactToMessage(chatID int64, messageID int) {
+func (c *TelegramChannel) reactToMessage(chatID int64, messageID int, emoji string) {
 	params := tgbotapi.Params{}
 	params.AddNonZero64("chat_id", chatID)
 	params.AddNonZero("message_id", messageID)
 	params.AddInterface("reaction", []map[string]string{
-		{"type": "emoji", "emoji": "\U0001F440"},
+		{"type": "emoji", "emoji": emoji},
 	})
 	if _, err := c.bot.MakeRequest("setMessageReaction", params); err != nil {
 		log.Printf("Failed to react to message: %v", err)
