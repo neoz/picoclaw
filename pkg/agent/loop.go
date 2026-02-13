@@ -36,6 +36,7 @@ type AgentLoop struct {
 	sessions       *session.SessionManager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
+	stm            *tools.STMStore
 	running        atomic.Bool
 	summarizing    sync.Map      // Tracks which sessions are currently being summarized
 }
@@ -88,6 +89,10 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	editFileTool := tools.NewEditFileTool(workspace)
 	toolsRegistry.Register(editFileTool)
 
+	// Register short-term memory tool
+	stmStore := tools.NewSTMStore(filepath.Join(workspace, "stm"))
+	toolsRegistry.Register(tools.NewSTMTool(stmStore))
+
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
 	// Create context builder and set tools registry
@@ -104,6 +109,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		sessions:       sessionsManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
+		stm:            stmStore,
 		summarizing:    sync.Map{},
 	}
 }
@@ -120,6 +126,8 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			if !ok {
 				continue
 			}
+
+			al.stm.Save(msg.SessionKey, msg.Content, msg.SenderID)
 
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
@@ -444,6 +452,11 @@ func (al *AgentLoop) updateToolContexts(channel, chatID string) {
 	}
 	if tool, ok := al.tools.Get("spawn"); ok {
 		if st, ok := tool.(*tools.SpawnTool); ok {
+			st.SetContext(channel, chatID)
+		}
+	}
+	if tool, ok := al.tools.Get("short_term_memory"); ok {
+		if st, ok := tool.(*tools.STMTool); ok {
 			st.SetContext(channel, chatID)
 		}
 	}
