@@ -7,16 +7,34 @@ VOLUME_NAME="picoclaw-workspace"
 PORT="18790"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
-FORCE=false
+ACTION="run"
+BUILD=false
+CLEAN=false
 
 for arg in "$@"; do
     case "$arg" in
-        --force|-f) FORCE=true ;;
+        --build|-b) BUILD=true ;;
+        --clean|-c) CLEAN=true ;;
+        --stop|-s) ACTION="stop" ;;
+        --force|-f) BUILD=true; CLEAN=true ;;
     esac
 done
 
-# Build only if image doesn't exist or --force
-if [ "$FORCE" = true ] || ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+# --stop: stop the container and exit
+if [ "$ACTION" = "stop" ]; then
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "Stopping container..."
+        docker stop "$CONTAINER_NAME"
+        docker rm -f "$CONTAINER_NAME"
+        echo "Container '$CONTAINER_NAME' stopped."
+    else
+        echo "Container '$CONTAINER_NAME' is not running."
+    fi
+    exit 0
+fi
+
+# --build: force rebuild image
+if [ "$BUILD" = true ] || ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
     echo "Building image..."
     docker build -t "$IMAGE_NAME" .
 fi
@@ -25,12 +43,11 @@ fi
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "Stopping existing container..."
     docker stop "$CONTAINER_NAME"
-    echo "Removing existing container..."
     docker rm -f "$CONTAINER_NAME"
 fi
 
-# if force, remove remove existing volume
-if [ "$FORCE" = true ] && docker volume ls --format '{{.Name}}' | grep -q "^${VOLUME_NAME}$"; then
+# --clean: remove existing volume
+if [ "$CLEAN" = true ] && docker volume ls --format '{{.Name}}' | grep -q "^${VOLUME_NAME}$"; then
     echo "Removing existing volume..."
     docker volume rm "$VOLUME_NAME"
 fi
