@@ -2,6 +2,7 @@ package channels
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,7 +29,6 @@ type TelegramChannel struct {
 	updates      tgbotapi.UpdatesChannel
 	transcriber  *voice.GroqTranscriber
 	placeholders sync.Map // chatID -> messageID
-	stopThinking sync.Map // chatID -> chan struct{}
 }
 
 func NewTelegramChannel(cfg config.TelegramConfig, bus *bus.MessageBus) (*TelegramChannel, error) {
@@ -100,6 +100,26 @@ func (c *TelegramChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
+// sendWithRetry sends a Telegram Chattable and retries on rate limit (429) errors.
+func (c *TelegramChannel) sendWithRetry(msg tgbotapi.Chattable) (tgbotapi.Message, error) {
+	const maxRetries = 3
+	for i := 0; i <= maxRetries; i++ {
+		resp, err := c.bot.Send(msg)
+		if err == nil {
+			return resp, nil
+		}
+		var tgErr *tgbotapi.Error
+		if errors.As(err, &tgErr) && tgErr.RetryAfter > 0 {
+			wait := time.Duration(tgErr.RetryAfter) * time.Second
+			log.Printf("Telegram rate limited, retrying after %d seconds (attempt %d/%d)", tgErr.RetryAfter, i+1, maxRetries)
+			time.Sleep(wait)
+			continue
+		}
+		return resp, err
+	}
+	return tgbotapi.Message{}, fmt.Errorf("telegram rate limit: max retries exceeded")
+}
+
 func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) error {
 	if !c.IsRunning() {
 		return fmt.Errorf("telegram bot not running")
@@ -110,12 +130,6 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		return fmt.Errorf("invalid chat ID: %w", err)
 	}
 
-	// Stop thinking animation
-	if stop, ok := c.stopThinking.Load(msg.ChatID); ok {
-		close(stop.(chan struct{}))
-		c.stopThinking.Delete(msg.ChatID)
-	}
-
 	htmlContent := markdownToTelegramHTML(msg.Content)
 
 	// Try to edit placeholder
@@ -124,7 +138,7 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		editMsg := tgbotapi.NewEditMessageText(chatID, pID.(int), htmlContent)
 		editMsg.ParseMode = tgbotapi.ModeHTML
 
-		if _, err := c.bot.Send(editMsg); err == nil {
+		if _, err := c.sendWithRetry(editMsg); err == nil {
 			return nil
 		}
 		// Fallback to new message if edit fails
@@ -133,11 +147,11 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	tgMsg := tgbotapi.NewMessage(chatID, htmlContent)
 	tgMsg.ParseMode = tgbotapi.ModeHTML
 
-	if _, err := c.bot.Send(tgMsg); err != nil {
+	if _, err := c.sendWithRetry(tgMsg); err != nil {
 		log.Printf("HTML parse failed, falling back to plain text: %v", err)
 		tgMsg = tgbotapi.NewMessage(chatID, msg.Content)
 		tgMsg.ParseMode = ""
-		_, err = c.bot.Send(tgMsg)
+		_, err = c.sendWithRetry(tgMsg)
 		return err
 	}
 
@@ -246,35 +260,13 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 
 	log.Printf("Telegram message from %s: %s...", senderID, truncateString(content, 50))
 
-	// Thinking indicator
-	c.bot.Send(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
+	// Typing indicator + placeholder message (edited with final response)
+	c.sendWithRetry(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
 
-	stopChan := make(chan struct{})
-	c.stopThinking.Store(fmt.Sprintf("%d", chatID), stopChan)
-
-	pMsg, err := c.bot.Send(tgbotapi.NewMessage(chatID, "Thinking... 💭"))
+	chatIDStr := fmt.Sprintf("%d", chatID)
+	pMsg, err := c.sendWithRetry(tgbotapi.NewMessage(chatID, "Thinking..."))
 	if err == nil {
-		pID := pMsg.MessageID
-		c.placeholders.Store(fmt.Sprintf("%d", chatID), pID)
-
-		go func(cid int64, mid int, stop <-chan struct{}) {
-			dots := []string{".", "..", "..."}
-			emotes := []string{"💭", "🤔", "☁️"}
-			i := 0
-			ticker := time.NewTicker(2000 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-stop:
-					return
-				case <-ticker.C:
-					i++
-					text := fmt.Sprintf("Thinking%s %s", dots[i%len(dots)], emotes[i%len(emotes)])
-					edit := tgbotapi.NewEditMessageText(cid, mid, text)
-					c.bot.Send(edit)
-				}
-			}
-		}(chatID, pID, stopChan)
+		c.placeholders.Store(chatIDStr, pMsg.MessageID)
 	}
 
 	metadata := map[string]string{
