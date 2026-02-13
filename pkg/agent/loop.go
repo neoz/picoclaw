@@ -455,7 +455,7 @@ func (al *AgentLoop) updateToolContexts(channel, chatID string) {
 			st.SetContext(channel, chatID)
 		}
 	}
-	if tool, ok := al.tools.Get("short_term_memory"); ok {
+	if tool, ok := al.tools.Get("message_history"); ok {
 		if st, ok := tool.(*tools.STMTool); ok {
 			st.SetContext(channel, chatID)
 		}

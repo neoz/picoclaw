@@ -97,40 +97,34 @@ func (s *STMStore) Save(sessionKey, content, senderID string) {
 	s.persist(sessionKey)
 }
 
-func (s *STMStore) Recent(sessionKey string, limit, days int) []STMEntry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	entries := s.load(sessionKey)
+func filterEntries(entries []STMEntry, days int, senderID string) []STMEntry {
 	if days <= 0 || days > stmRetentionDays {
 		days = stmRetentionDays
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
-	var recent []STMEntry
+	var filtered []STMEntry
 	for _, e := range entries {
-		if e.Timestamp.After(cutoff) {
-			recent = append(recent, e)
+		if e.Timestamp.After(cutoff) && (senderID == "" || e.SenderID == senderID) {
+			filtered = append(filtered, e)
 		}
 	}
+	return filtered
+}
+
+func (s *STMStore) Recent(sessionKey string, limit, days int, senderID string) []STMEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	recent := filterEntries(s.load(sessionKey), days, senderID)
 	if limit > 0 && len(recent) > limit {
 		recent = recent[len(recent)-limit:]
 	}
 	return recent
 }
 
-func (s *STMStore) Search(sessionKey, query string, days int) []STMEntry {
+func (s *STMStore) Search(sessionKey, query string, days int, senderID string) []STMEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	entries := s.load(sessionKey)
-	if days <= 0 || days > stmRetentionDays {
-		days = stmRetentionDays
-	}
-	cutoff := time.Now().AddDate(0, 0, -days)
-	var docs []STMEntry
-	for _, e := range entries {
-		if e.Timestamp.After(cutoff) {
-			docs = append(docs, e)
-		}
-	}
+	docs := filterEntries(s.load(sessionKey), days, senderID)
 	if len(docs) == 0 {
 		return nil
 	}
@@ -231,11 +225,11 @@ func NewSTMTool(store *STMStore) *STMTool {
 }
 
 func (t *STMTool) Name() string {
-	return "short_term_memory"
+	return "message_history"
 }
 
 func (t *STMTool) Description() string {
-	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked search over recent messages. Use 'days' to narrow the time window (default 7, set 1 for last day)."
+	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked search over recent messages. Use 'days' to narrow the time window (default 7, set 1 for last day). Use 'sender_id' to filter by a specific user."
 }
 
 func (t *STMTool) Parameters() map[string]interface{} {
@@ -259,6 +253,10 @@ func (t *STMTool) Parameters() map[string]interface{} {
 				"type":        "number",
 				"description": "Time window in days (default 7, set 1 for last day only)",
 			},
+			"sender_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Filter messages by sender ID",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -277,6 +275,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 	if d, ok := args["days"].(float64); ok && d > 0 {
 		days = int(d)
 	}
+	senderID, _ := args["sender_id"].(string)
 
 	switch action {
 	case "recent":
@@ -287,7 +286,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		if limit > 50 {
 			limit = 50
 		}
-		entries := t.store.Recent(sessionKey, limit, days)
+		entries := t.store.Recent(sessionKey, limit, days, senderID)
 		if len(entries) == 0 {
 			return "No recent messages found.", nil
 		}
@@ -298,7 +297,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		if query == "" {
 			return "Error: 'query' parameter is required for search action.", nil
 		}
-		entries := t.store.Search(sessionKey, query, days)
+		entries := t.store.Search(sessionKey, query, days, senderID)
 		if len(entries) == 0 {
 			return "No matching messages found.", nil
 		}
