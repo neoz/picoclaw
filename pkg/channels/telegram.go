@@ -260,6 +260,11 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 
 	log.Printf("Telegram message from %s: %s...", senderID, truncateString(content, 50))
 
+	if !c.IsAllowed(senderID) {
+		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
+		return
+	}
+
 	// Typing indicator + placeholder message (edited with final response)
 	c.sendWithRetry(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
 
