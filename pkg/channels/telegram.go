@@ -353,7 +353,16 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 		"is_group":   fmt.Sprintf("%t", isGroup),
 	}
 
-	c.HandleMessage(senderID, fmt.Sprintf("%d", chatID), content, mediaPaths, metadata)
+	sessionKey := fmt.Sprintf("%s:%s", c.name, chatIDStr)
+	c.bus.PublishInbound(bus.InboundMessage{
+		Channel:    c.name,
+		SenderID:   senderID,
+		ChatID:     chatIDStr,
+		Content:    content,
+		Media:      mediaPaths,
+		SessionKey: sessionKey,
+		Metadata:   metadata,
+	})
 }
 
 func (c *TelegramChannel) downloadPhoto(fileID string) string {
