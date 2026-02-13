@@ -329,7 +329,8 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 	}
 
 	// Grant one-time temp allow for other users mentioned in this message
-	if isGroup {
+	// Only permanently allowed users can grant temp access
+	if isGroup && c.IsAllowed(senderID) {
 		c.grantTempAllows(chatID, message)
 	}
 
