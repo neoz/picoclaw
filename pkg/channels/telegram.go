@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,14 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	chatID, err := parseChatID(msg.ChatID)
 	if err != nil {
 		return fmt.Errorf("invalid chat ID: %w", err)
+	}
+
+	// Handle reaction messages
+	if msg.Metadata["type"] == "reaction" {
+		if msgID, err := strconv.Atoi(msg.Metadata["message_id"]); err == nil {
+			c.reactToMessage(chatID, msgID)
+		}
+		return nil
 	}
 
 	htmlContent := markdownToTelegramHTML(msg.Content)
@@ -264,13 +273,18 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 
 	log.Printf("Telegram message from %s: %s...", senderID, truncateString(content, 50))
 
-	if !c.IsAllowed(senderID) {
+	isGroup := message.Chat.Type != "private"
+	allowed := c.IsAllowed(senderID)
+
+	if !allowed {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
+		if isGroup {
+			c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
+		}
 		return
 	}
 
 	// In groups, only respond if bot is @mentioned or message is a reply to the bot
-	isGroup := message.Chat.Type != "private"
 	if isGroup {
 		mentioned := false
 		for _, e := range message.Entities {
@@ -287,6 +301,7 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 			message.ReplyToMessage.From.ID == c.botID
 
 		if !mentioned && !isReplyToBot {
+			c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
 			return
 		}
 
@@ -297,6 +312,9 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 			content = "[empty message]"
 		}
 	}
+
+	// React to sender message to acknowledge receipt
+	c.reactToMessage(chatID, message.MessageID)
 
 	// Typing indicator + placeholder message (edited with final response)
 	c.sendWithRetry(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
@@ -312,7 +330,7 @@ func (c *TelegramChannel) handleMessage(update tgbotapi.Update) {
 		"user_id":    fmt.Sprintf("%d", user.ID),
 		"username":   user.UserName,
 		"first_name": user.FirstName,
-		"is_group":   fmt.Sprintf("%t", message.Chat.Type != "private"),
+		"is_group":   fmt.Sprintf("%t", isGroup),
 	}
 
 	c.HandleMessage(senderID, fmt.Sprintf("%d", chatID), content, mediaPaths, metadata)
@@ -411,6 +429,40 @@ func (c *TelegramChannel) downloadFile(fileID, ext string) string {
 	}
 
 	return localPath
+}
+
+func (c *TelegramChannel) publishObserveOnly(senderID string, chatID int64, messageID int, user *tgbotapi.User, content string, mediaPaths []string) {
+	chatIDStr := fmt.Sprintf("%d", chatID)
+	sessionKey := fmt.Sprintf("%s:%s", c.name, chatIDStr)
+
+	c.bus.PublishInbound(bus.InboundMessage{
+		Channel:    c.name,
+		SenderID:   senderID,
+		ChatID:     chatIDStr,
+		Content:    content,
+		Media:      mediaPaths,
+		SessionKey: sessionKey,
+		Metadata: map[string]string{
+			"message_id":   fmt.Sprintf("%d", messageID),
+			"user_id":      fmt.Sprintf("%d", user.ID),
+			"username":     user.UserName,
+			"first_name":   user.FirstName,
+			"is_group":     "true",
+			"observe_only": "true",
+		},
+	})
+}
+
+func (c *TelegramChannel) reactToMessage(chatID int64, messageID int) {
+	params := tgbotapi.Params{}
+	params.AddNonZero64("chat_id", chatID)
+	params.AddNonZero("message_id", messageID)
+	params.AddInterface("reaction", []map[string]string{
+		{"type": "emoji", "emoji": "\U0001F440"},
+	})
+	if _, err := c.bot.MakeRequest("setMessageReaction", params); err != nil {
+		log.Printf("Failed to react to message: %v", err)
+	}
 }
 
 func parseChatID(chatIDStr string) (int64, error) {

@@ -43,13 +43,14 @@ type AgentLoop struct {
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string // Session identifier for history/context
-	Channel         string // Target channel for tool execution
-	ChatID          string // Target chat ID for tool execution
-	UserMessage     string // User message content (may include prefix)
-	DefaultResponse string // Response when LLM returns empty
-	EnableSummary   bool   // Whether to trigger summarization
-	SendResponse    bool   // Whether to send response via bus
+	SessionKey      string            // Session identifier for history/context
+	Channel         string            // Target channel for tool execution
+	ChatID          string            // Target chat ID for tool execution
+	UserMessage     string            // User message content (may include prefix)
+	DefaultResponse string            // Response when LLM returns empty
+	EnableSummary   bool              // Whether to trigger summarization
+	SendResponse    bool              // Whether to send response via bus
+	Metadata        map[string]string // Original inbound message metadata
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
@@ -129,6 +130,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 			al.stm.Save(msg.SessionKey, msg.Content, msg.SenderID)
 
+			if msg.Metadata["observe_only"] == "true" {
+				continue
+			}
+
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
 				logger.ErrorCF("agent", "Failed to process message", map[string]interface{}{
@@ -201,6 +206,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: "I've completed processing but have no response to give.",
 		EnableSummary:   true,
 		SendResponse:    false,
+		Metadata:        msg.Metadata,
 	})
 }
 
@@ -390,6 +396,18 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				"count":     len(toolNames),
 				"iteration": iteration,
 			})
+
+		// React to sender message to indicate tool call activity
+		if msgID := opts.Metadata["message_id"]; msgID != "" {
+			al.bus.PublishOutbound(bus.OutboundMessage{
+				Channel: opts.Channel,
+				ChatID:  opts.ChatID,
+				Metadata: map[string]string{
+					"type":       "reaction",
+					"message_id": msgID,
+				},
+			})
+		}
 
 		// Build assistant message with tool calls
 		assistantMsg := providers.Message{
