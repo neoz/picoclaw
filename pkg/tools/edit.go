@@ -66,27 +66,10 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]interface{})
 		return "", fmt.Errorf("new_text is required")
 	}
 
-	// Resolve path and enforce directory restriction if configured
-	resolvedPath := path
-	if filepath.IsAbs(path) {
-		resolvedPath = filepath.Clean(path)
-	} else {
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve path: %w", err)
-		}
-		resolvedPath = abs
-	}
-
-	// Check directory restriction
-	if t.allowedDir != "" {
-		allowedAbs, err := filepath.Abs(t.allowedDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve allowed directory: %w", err)
-		}
-		if !strings.HasPrefix(resolvedPath, allowedAbs) {
-			return "", fmt.Errorf("path %s is outside allowed directory %s", path, t.allowedDir)
-		}
+	// Resolve path and enforce directory restriction
+	resolvedPath, err := checkAllowedDir(path, t.allowedDir)
+	if err != nil {
+		return "", err
 	}
 
 	if _, err := os.Stat(resolvedPath); os.IsNotExist(err) {

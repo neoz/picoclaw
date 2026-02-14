@@ -12,11 +12,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 )
+
+const maxRetries = 3
 
 type HTTPProvider struct {
 	apiKey     string
@@ -78,22 +83,49 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		req.Header.Set("Authorization", authHeader)
 	}
 
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
+	var body []byte
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			req, err = http.NewRequestWithContext(ctx, "POST", p.apiBase+"/chat/completions", bytes.NewReader(jsonData))
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if p.apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+p.apiKey)
+			}
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to send request: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
+		body, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return p.parseResponse(body)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRetries {
+			delay := parseRetryDelay(resp.Header.Get("Retry-After"), body)
+			log.Printf("[provider] Rate limited (429), retrying in %v (attempt %d/%d)", delay, attempt+1, maxRetries)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+				continue
+			}
+		}
+
 		return nil, fmt.Errorf("API error: %s", string(body))
 	}
 
-	return p.parseResponse(body)
+	return nil, fmt.Errorf("API error after %d retries: %s", maxRetries, string(body))
 }
 
 func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
@@ -247,4 +279,36 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	}
 
 	return NewHTTPProvider(apiKey, apiBase), nil
+}
+
+// parseRetryDelay extracts retry delay from Retry-After header or response body.
+func parseRetryDelay(retryAfter string, body []byte) time.Duration {
+	// Try Retry-After header (seconds)
+	if retryAfter != "" {
+		if secs, err := strconv.Atoi(retryAfter); err == nil {
+			return time.Duration(secs) * time.Second
+		}
+	}
+
+	// Try parsing retryDelay from Google API error body
+	var errResp struct {
+		Error struct {
+			Details []struct {
+				Type       string `json:"@type"`
+				RetryDelay string `json:"retryDelay"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &errResp) == nil {
+		for _, d := range errResp.Error.Details {
+			if d.RetryDelay != "" {
+				if dur, err := time.ParseDuration(d.RetryDelay); err == nil {
+					return dur
+				}
+			}
+		}
+	}
+
+	// Default backoff
+	return 30 * time.Second
 }

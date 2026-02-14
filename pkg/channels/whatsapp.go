@@ -111,15 +111,21 @@ func (c *WhatsAppChannel) listen(ctx context.Context) {
 		default:
 			c.mu.Lock()
 			conn := c.conn
+			connected := c.connected
 			c.mu.Unlock()
 
-			if conn == nil {
-				time.Sleep(1 * time.Second)
-				continue
+			if !connected || conn == nil {
+				return
 			}
 
 			_, message, err := conn.ReadMessage()
 			if err != nil {
+				c.mu.Lock()
+				stillConnected := c.connected
+				c.mu.Unlock()
+				if !stillConnected {
+					return
+				}
 				log.Printf("WhatsApp read error: %v", err)
 				time.Sleep(2 * time.Second)
 				continue

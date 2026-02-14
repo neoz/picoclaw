@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
@@ -35,19 +36,21 @@ type AgentLoop struct {
 	sessions       *session.SessionManager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
-	running        bool
+	stm            *tools.STMStore
+	running        atomic.Bool
 	summarizing    sync.Map      // Tracks which sessions are currently being summarized
 }
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey      string // Session identifier for history/context
-	Channel         string // Target channel for tool execution
-	ChatID          string // Target chat ID for tool execution
-	UserMessage     string // User message content (may include prefix)
-	DefaultResponse string // Response when LLM returns empty
-	EnableSummary   bool   // Whether to trigger summarization
-	SendResponse    bool   // Whether to send response via bus
+	SessionKey      string            // Session identifier for history/context
+	Channel         string            // Target channel for tool execution
+	ChatID          string            // Target chat ID for tool execution
+	UserMessage     string            // User message content (may include prefix)
+	DefaultResponse string            // Response when LLM returns empty
+	EnableSummary   bool              // Whether to trigger summarization
+	SendResponse    bool              // Whether to send response via bus
+	Metadata        map[string]string // Original inbound message metadata
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers.LLMProvider) *AgentLoop {
@@ -55,13 +58,15 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	os.MkdirAll(workspace, 0755)
 
 	toolsRegistry := tools.NewToolRegistry()
-	toolsRegistry.Register(&tools.ReadFileTool{})
-	toolsRegistry.Register(&tools.WriteFileTool{})
-	toolsRegistry.Register(&tools.ListDirTool{})
+	toolsRegistry.Register(tools.NewReadFileTool(workspace))
+	toolsRegistry.Register(tools.NewWriteFileTool(workspace))
+	toolsRegistry.Register(tools.NewListDirTool(workspace))
 	toolsRegistry.Register(tools.NewExecTool(workspace))
 
 	braveAPIKey := cfg.Tools.Web.Search.APIKey
-	toolsRegistry.Register(tools.NewWebSearchTool(braveAPIKey, cfg.Tools.Web.Search.MaxResults))
+	if braveAPIKey != "" {
+		toolsRegistry.Register(tools.NewWebSearchTool(braveAPIKey, cfg.Tools.Web.Search.MaxResults))
+	}
 	toolsRegistry.Register(tools.NewWebFetchTool(50000))
 
 	// Register message tool
@@ -85,6 +90,10 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	editFileTool := tools.NewEditFileTool(workspace)
 	toolsRegistry.Register(editFileTool)
 
+	// Register short-term memory tool
+	stmStore := tools.NewSTMStore(filepath.Join(workspace, "stm"))
+	toolsRegistry.Register(tools.NewSTMTool(stmStore))
+
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
 	// Create context builder and set tools registry
@@ -101,15 +110,15 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		sessions:       sessionsManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
-		running:        false,
+		stm:            stmStore,
 		summarizing:    sync.Map{},
 	}
 }
 
 func (al *AgentLoop) Run(ctx context.Context) error {
-	al.running = true
+	al.running.Store(true)
 
-	for al.running {
+	for al.running.Load() {
 		select {
 		case <-ctx.Done():
 			return nil
@@ -119,9 +128,20 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
+			al.stm.Save(msg.SessionKey, msg.Content, msg.SenderID)
+
+			if msg.Metadata["observe_only"] == "true" {
+				continue
+			}
+
 			response, err := al.processMessage(ctx, msg)
 			if err != nil {
-				response = fmt.Sprintf("Error processing message: %v", err)
+				logger.ErrorCF("agent", "Failed to process message", map[string]interface{}{
+					"error":   err.Error(),
+					"channel": msg.Channel,
+					"chat_id": msg.ChatID,
+				})
+				response = "Something went wrong, please try again later."
 			}
 
 			if response != "" {
@@ -138,7 +158,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 }
 
 func (al *AgentLoop) Stop() {
-	al.running = false
+	al.running.Store(false)
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -186,6 +206,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		DefaultResponse: "I've completed processing but have no response to give.",
 		EnableSummary:   true,
 		SendResponse:    false,
+		Metadata:        msg.Metadata,
 	})
 }
 
@@ -376,6 +397,18 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				"iteration": iteration,
 			})
 
+		// React to sender message to indicate tool call activity
+		if msgID := opts.Metadata["message_id"]; msgID != "" {
+			al.bus.PublishOutbound(bus.OutboundMessage{
+				Channel: opts.Channel,
+				ChatID:  opts.ChatID,
+				Metadata: map[string]string{
+					"type":       "reaction",
+					"message_id": msgID,
+				},
+			})
+		}
+
 		// Build assistant message with tool calls
 		assistantMsg := providers.Message{
 			Role:    "assistant",
@@ -437,6 +470,11 @@ func (al *AgentLoop) updateToolContexts(channel, chatID string) {
 	}
 	if tool, ok := al.tools.Get("spawn"); ok {
 		if st, ok := tool.(*tools.SpawnTool); ok {
+			st.SetContext(channel, chatID)
+		}
+	}
+	if tool, ok := al.tools.Get("message_history"); ok {
+		if st, ok := tool.(*tools.STMTool); ok {
 			st.SetContext(channel, chatID)
 		}
 	}
