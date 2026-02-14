@@ -210,6 +210,13 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	lowerModel := strings.ToLower(model)
 
 	switch {
+	case strings.HasPrefix(model, "nvidia/"):
+		apiKey = cfg.Providers.Nvidia.APIKey
+		apiBase = cfg.Providers.Nvidia.APIBase
+		if apiBase == "" {
+			apiBase = "https://integrate.api.nvidia.com/v1"
+		}
+
 	case strings.HasPrefix(model, "openrouter/") || strings.HasPrefix(model, "anthropic/") || strings.HasPrefix(model, "openai/") || strings.HasPrefix(model, "meta-llama/") || strings.HasPrefix(model, "deepseek/") || strings.HasPrefix(model, "google/"):
 		apiKey = cfg.Providers.OpenRouter.APIKey
 		if cfg.Providers.OpenRouter.APIBase != "" {
