@@ -63,11 +63,17 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	toolsRegistry.Register(tools.NewListDirTool(workspace))
 	toolsRegistry.Register(tools.NewExecTool(workspace))
 
-	braveAPIKey := cfg.Tools.Web.Search.APIKey
-	if braveAPIKey != "" {
-		toolsRegistry.Register(tools.NewWebSearchTool(braveAPIKey, cfg.Tools.Web.Search.MaxResults))
+	ollamaAPIKey := cfg.Tools.Web.Ollama.APIKey
+	if ollamaAPIKey != "" {
+		toolsRegistry.Register(tools.NewOllamaSearchTool(ollamaAPIKey, cfg.Tools.Web.Ollama.MaxResults))
+		toolsRegistry.Register(tools.NewOllamaFetchTool(ollamaAPIKey))
+	} else {
+		braveAPIKey := cfg.Tools.Web.Search.APIKey
+		if braveAPIKey != "" {
+			toolsRegistry.Register(tools.NewWebSearchTool(braveAPIKey, cfg.Tools.Web.Search.MaxResults))
+		}
+		toolsRegistry.Register(tools.NewWebFetchTool(50000))
 	}
-	toolsRegistry.Register(tools.NewWebFetchTool(50000))
 
 	// Register message tool
 	messageTool := tools.NewMessageTool()
