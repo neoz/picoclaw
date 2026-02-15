@@ -94,5 +94,10 @@
   "gateway": {
     "host": "0.0.0.0",
     "port": 18790
+  },
+  "heartbeat": {
+    "enabled": false,
+    "interval_seconds": 1800,
+    "channel": "telegram"
   }
 }
