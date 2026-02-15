@@ -100,6 +100,9 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	stmStore := tools.NewSTMStore(filepath.Join(workspace, "stm"))
 	toolsRegistry.Register(tools.NewSTMTool(stmStore))
 
+	// Register memory search tool
+	toolsRegistry.Register(tools.NewMemorySearchTool(workspace))
+
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
 	// Create context builder and set tools registry
