@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /bin/picocla
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata su-exec
 
 RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
 
@@ -28,9 +28,10 @@ RUN mkdir -p /home/picoclaw/.picoclaw/workspace/memory \
 
 COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
 
-USER picoclaw
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 18790
 
-ENTRYPOINT ["picoclaw"]
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["gateway"]
