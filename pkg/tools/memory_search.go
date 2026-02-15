@@ -3,10 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -65,17 +63,21 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		return "No memory files found.", nil
 	}
 
-	results := bm25SearchMemory(paragraphs, query, limit)
-	if len(results) == 0 {
+	docs := make([]string, len(paragraphs))
+	for i, p := range paragraphs {
+		docs[i] = p.Content
+	}
+	indices := bm25Rank(docs, query, limit)
+	if len(indices) == 0 {
 		return "No matching results found.", nil
 	}
 
 	var b strings.Builder
-	for i, r := range results {
+	for i, idx := range indices {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		b.WriteString(fmt.Sprintf("[%s]\n%s", r.Source, r.Content))
+		b.WriteString(fmt.Sprintf("[%s]\n%s", paragraphs[idx].Source, paragraphs[idx].Content))
 	}
 	return b.String(), nil
 }
@@ -118,75 +120,3 @@ func collectMemoryParagraphs(memoryDir string) []memoryParagraph {
 	return paragraphs
 }
 
-func bm25SearchMemory(docs []memoryParagraph, query string, limit int) []memoryParagraph {
-	queryTerms := tokenize(query)
-	if len(queryTerms) == 0 {
-		return nil
-	}
-
-	n := float64(len(docs))
-	k1 := 1.2
-	b := 0.75
-
-	// Compute average document length
-	var totalLen float64
-	docTokens := make([][]string, len(docs))
-	for i, doc := range docs {
-		tokens := tokenize(doc.Content)
-		docTokens[i] = tokens
-		totalLen += float64(len(tokens))
-	}
-	avgDL := totalLen / n
-
-	// Compute IDF for each query term
-	idf := make(map[string]float64)
-	for _, term := range queryTerms {
-		df := 0
-		for _, tokens := range docTokens {
-			for _, t := range tokens {
-				if t == term {
-					df++
-					break
-				}
-			}
-		}
-		idf[term] = math.Log((n-float64(df)+0.5)/(float64(df)+0.5) + 1)
-	}
-
-	// Score each document
-	type scored struct {
-		doc   memoryParagraph
-		score float64
-	}
-	results := make([]scored, 0, len(docs))
-	for i, doc := range docs {
-		tokens := docTokens[i]
-		dl := float64(len(tokens))
-		tf := make(map[string]int)
-		for _, t := range tokens {
-			tf[t]++
-		}
-		var score float64
-		for _, term := range queryTerms {
-			f := float64(tf[term])
-			score += idf[term] * (f * (k1 + 1)) / (f + k1*(1-b+b*dl/avgDL))
-		}
-		if score > 0 {
-			results = append(results, scored{doc: doc, score: score})
-		}
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].score > results[j].score
-	})
-
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
-	out := make([]memoryParagraph, len(results))
-	for i, r := range results {
-		out[i] = r.doc
-	}
-	return out
-}
