@@ -150,46 +150,59 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 
 	htmlContent := markdownToTelegramHTML(msg.Content)
 
-	// Try to edit placeholder
+	// Try to edit placeholder (only if message fits in one chunk)
 	if pID, ok := c.placeholders.Load(msg.ChatID); ok {
 		c.placeholders.Delete(msg.ChatID)
-		editParams := &telego.EditMessageTextParams{
+		if len(htmlContent) <= telegramMaxMessageLength {
+			editParams := &telego.EditMessageTextParams{
+				ChatID:    tu.ID(chatID),
+				MessageID: pID.(int),
+				Text:      htmlContent,
+				ParseMode: telego.ModeHTML,
+			}
+
+			editErr := c.sendWithRetry(func() error {
+				_, e := c.bot.EditMessageText(ctx, editParams)
+				return e
+			})
+			if editErr == nil {
+				return nil
+			}
+		} else {
+			// Delete placeholder since we'll send multiple messages
+			c.bot.DeleteMessage(ctx, &telego.DeleteMessageParams{
+				ChatID:    tu.ID(chatID),
+				MessageID: pID.(int),
+			})
+		}
+		// Fallback to new message(s) if edit fails or content too long
+	}
+
+	// Split and send
+	for _, chunk := range splitMessage(htmlContent, telegramMaxMessageLength) {
+		params := &telego.SendMessageParams{
 			ChatID:    tu.ID(chatID),
-			MessageID: pID.(int),
-			Text:      htmlContent,
+			Text:      chunk,
 			ParseMode: telego.ModeHTML,
 		}
 
-		editErr := c.sendWithRetry(func() error {
-			_, e := c.bot.EditMessageText(ctx, editParams)
+		sendErr := c.sendWithRetry(func() error {
+			_, e := c.bot.SendMessage(ctx, params)
 			return e
 		})
-		if editErr == nil {
-			return nil
+		if sendErr != nil {
+			log.Printf("HTML parse failed, falling back to plain text: %v", sendErr)
+			plainParams := &telego.SendMessageParams{
+				ChatID: tu.ID(chatID),
+				Text:   chunk,
+			}
+			if err := c.sendWithRetry(func() error {
+				_, e := c.bot.SendMessage(ctx, plainParams)
+				return e
+			}); err != nil {
+				return err
+			}
 		}
-		// Fallback to new message if edit fails
-	}
-
-	params := &telego.SendMessageParams{
-		ChatID:    tu.ID(chatID),
-		Text:      htmlContent,
-		ParseMode: telego.ModeHTML,
-	}
-
-	sendErr := c.sendWithRetry(func() error {
-		_, e := c.bot.SendMessage(ctx, params)
-		return e
-	})
-	if sendErr != nil {
-		log.Printf("HTML parse failed, falling back to plain text: %v", sendErr)
-		plainParams := &telego.SendMessageParams{
-			ChatID: tu.ID(chatID),
-			Text:   msg.Content,
-		}
-		return c.sendWithRetry(func() error {
-			_, e := c.bot.SendMessage(ctx, plainParams)
-			return e
-		})
 	}
 
 	return nil
@@ -586,6 +599,36 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen]
+}
+
+const telegramMaxMessageLength = 4096
+
+func splitMessage(text string, maxLen int) []string {
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var parts []string
+	for len(text) > 0 {
+		if len(text) <= maxLen {
+			parts = append(parts, text)
+			break
+		}
+
+		// Find a good split point: prefer double newline, then single newline, then space
+		cut := maxLen
+		if idx := strings.LastIndex(text[:maxLen], "\n\n"); idx > maxLen/2 {
+			cut = idx + 2
+		} else if idx := strings.LastIndex(text[:maxLen], "\n"); idx > maxLen/2 {
+			cut = idx + 1
+		} else if idx := strings.LastIndex(text[:maxLen], " "); idx > maxLen/2 {
+			cut = idx + 1
+		}
+
+		parts = append(parts, text[:cut])
+		text = text[cut:]
+	}
+	return parts
 }
 
 func markdownToTelegramHTML(text string) string {
