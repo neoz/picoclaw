@@ -15,7 +15,14 @@ type Config struct {
 	Providers ProvidersConfig `json:"providers"`
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
+	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	mu        sync.RWMutex
+}
+
+type HeartbeatConfig struct {
+	Enabled         bool   `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
+	IntervalSeconds int    `json:"interval_seconds" env:"PICOCLAW_HEARTBEAT_INTERVAL_SECONDS"`
+	Channel         string `json:"channel" env:"PICOCLAW_HEARTBEAT_CHANNEL"`
 }
 
 type AgentsConfig struct {
@@ -196,6 +203,10 @@ func DefaultConfig() *Config {
 			Host: "0.0.0.0",
 			Port: 18790,
 		},
+		Heartbeat: HeartbeatConfig{
+			Enabled:         false,
+			IntervalSeconds: 1800,
+		},
 		Tools: ToolsConfig{
 			Web: WebToolsConfig{
 				Search: WebSearchConfig{
@@ -302,6 +313,30 @@ func (c *Config) GetAPIBase() string {
 		return c.Providers.VLLM.APIBase
 	}
 	return ""
+}
+
+// GetChannelAllowFrom returns the allow_from list for a given channel name.
+func (c *Config) GetChannelAllowFrom(channel string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	switch channel {
+	case "telegram":
+		return c.Channels.Telegram.AllowFrom
+	case "discord":
+		return c.Channels.Discord.AllowFrom
+	case "whatsapp":
+		return c.Channels.WhatsApp.AllowFrom
+	case "feishu":
+		return c.Channels.Feishu.AllowFrom
+	case "qq":
+		return c.Channels.QQ.AllowFrom
+	case "dingtalk":
+		return c.Channels.DingTalk.AllowFrom
+	case "maixcam":
+		return c.Channels.MaixCam.AllowFrom
+	default:
+		return nil
+	}
 }
 
 func expandHome(path string) string {

@@ -556,10 +556,30 @@ func gatewayCmd() {
 
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
-		nil,
-		30*60,
-		true,
+		cfg.Heartbeat.IntervalSeconds,
+		cfg.Heartbeat.Enabled,
 	)
+	// Resolve heartbeat delivery target from channel's allow_from
+	if cfg.Heartbeat.Enabled {
+		heartbeatChannel := cfg.Heartbeat.Channel
+		allowFrom := cfg.GetChannelAllowFrom(heartbeatChannel)
+		if heartbeatChannel == "" || len(allowFrom) == 0 {
+			fmt.Printf("Warning: heartbeat enabled but channel '%s' has no allow_from configured, disabling heartbeat\n", heartbeatChannel)
+			heartbeatService = heartbeat.NewHeartbeatService(cfg.WorkspacePath(), cfg.Heartbeat.IntervalSeconds, false)
+		} else {
+			heartbeatChatID := allowFrom[0]
+			heartbeatService.SetOnHeartbeat(func(prompt string) (string, error) {
+				return agentLoop.ProcessDirectWithChannel(
+					context.Background(),
+					prompt,
+					"heartbeat:system",
+					heartbeatChannel,
+					heartbeatChatID,
+				)
+			})
+			heartbeatService.SetDelivery(msgBus, heartbeatChannel, heartbeatChatID)
+		}
+	}
 
 	channelManager, err := channels.NewManager(cfg, msgBus)
 	if err != nil {
