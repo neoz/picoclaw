@@ -36,7 +36,6 @@ type AgentLoop struct {
 	sessions       *session.SessionManager
 	contextBuilder *ContextBuilder
 	tools          *tools.ToolRegistry
-	stm            *tools.STMStore
 	running        atomic.Bool
 	summarizing    sync.Map      // Tracks which sessions are currently being summarized
 }
@@ -96,14 +95,13 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	editFileTool := tools.NewEditFileTool(workspace)
 	toolsRegistry.Register(editFileTool)
 
-	// Register short-term memory tool
-	stmStore := tools.NewSTMStore(filepath.Join(workspace, "stm"))
-	toolsRegistry.Register(tools.NewSTMTool(stmStore))
+	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
+
+	// Register message history tool (backed by session manager)
+	toolsRegistry.Register(tools.NewSTMTool(sessionsManager))
 
 	// Register memory search tool
 	toolsRegistry.Register(tools.NewMemorySearchTool(workspace))
-
-	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
 
 	// Create context builder and set tools registry
 	contextBuilder := NewContextBuilder(workspace)
@@ -119,7 +117,6 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		sessions:       sessionsManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
-		stm:            stmStore,
 		summarizing:    sync.Map{},
 	}
 }
@@ -137,7 +134,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			al.stm.Save(msg.SessionKey, msg.Content, msg.SenderID)
+			al.sessions.AddToLog(msg.SessionKey, msg.Content, msg.SenderID)
 
 			if msg.Metadata["observe_only"] == "true" {
 				continue
@@ -291,6 +288,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 
 	// 6. Save final assistant message to session
 	al.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
+	al.sessions.AddToLog(opts.SessionKey, finalContent, "assistant")
 	al.sessions.Save(al.sessions.GetOrCreate(opts.SessionKey))
 
 	// 7. Optional: summarization

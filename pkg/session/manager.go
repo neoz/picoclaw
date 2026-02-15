@@ -4,18 +4,33 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+const messageLogRetentionDays = 7
+
+type MessageLogEntry struct {
+	Content   string    `json:"content"`
+	SenderID  string    `json:"sender_id"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 type Session struct {
-	Key      string              `json:"key"`
-	Messages []providers.Message `json:"messages"`
-	Summary  string              `json:"summary,omitempty"`
-	Created  time.Time           `json:"created"`
-	Updated  time.Time           `json:"updated"`
+	Key        string              `json:"key"`
+	Messages   []providers.Message `json:"messages"`
+	MessageLog []MessageLogEntry   `json:"message_log,omitempty"`
+	Summary    string              `json:"summary,omitempty"`
+	Created    time.Time           `json:"created"`
+	Updated    time.Time           `json:"updated"`
+}
+
+// SanitizeSessionKey replaces characters illegal in filenames (e.g. ':' on Windows).
+func SanitizeSessionKey(key string) string {
+	return strings.ReplaceAll(key, ":", "_")
 }
 
 type SessionManager struct {
@@ -150,7 +165,16 @@ func (sm *SessionManager) Save(session *Session) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sessionPath := filepath.Join(sm.storage, session.Key+".json")
+	return sm.persistSession(session)
+}
+
+// persistSession writes a session to disk. Caller must hold sm.mu.
+func (sm *SessionManager) persistSession(session *Session) error {
+	if sm.storage == "" {
+		return nil
+	}
+
+	sessionPath := filepath.Join(sm.storage, SanitizeSessionKey(session.Key)+".json")
 
 	data, err := json.MarshalIndent(session, "", "  ")
 	if err != nil {
@@ -160,11 +184,80 @@ func (sm *SessionManager) Save(session *Session) error {
 	return os.WriteFile(sessionPath, data, 0644)
 }
 
+// AddToLog appends a message to the session's MessageLog and persists.
+func (sm *SessionManager) AddToLog(key, content, senderID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, ok := sm.sessions[key]
+	if !ok {
+		session = &Session{
+			Key:     key,
+			Created: time.Now(),
+		}
+		sm.sessions[key] = session
+	}
+
+	session.MessageLog = append(session.MessageLog, MessageLogEntry{
+		Content:   content,
+		SenderID:  senderID,
+		Timestamp: time.Now(),
+	})
+	session.Updated = time.Now()
+	sm.persistSession(session)
+}
+
+// RecentLog returns the last `limit` log entries filtered by days and senderID.
+func (sm *SessionManager) RecentLog(key string, limit, days int, senderID string) []MessageLogEntry {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, ok := sm.sessions[key]
+	if !ok {
+		return nil
+	}
+
+	filtered := filterLogEntries(session.MessageLog, days, senderID)
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
+}
+
+// GetLog returns all log entries filtered by days and senderID (for BM25 search).
+func (sm *SessionManager) GetLog(key string, days int, senderID string) []MessageLogEntry {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, ok := sm.sessions[key]
+	if !ok {
+		return nil
+	}
+
+	return filterLogEntries(session.MessageLog, days, senderID)
+}
+
+func filterLogEntries(entries []MessageLogEntry, days int, senderID string) []MessageLogEntry {
+	if days <= 0 || days > messageLogRetentionDays {
+		days = messageLogRetentionDays
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	var filtered []MessageLogEntry
+	for _, e := range entries {
+		if e.Timestamp.After(cutoff) && (senderID == "" || e.SenderID == senderID) {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
 func (sm *SessionManager) loadSessions() error {
 	files, err := os.ReadDir(sm.storage)
 	if err != nil {
 		return err
 	}
+
+	cutoff := time.Now().AddDate(0, 0, -messageLogRetentionDays)
 
 	for _, file := range files {
 		if file.IsDir() {
@@ -184,6 +277,17 @@ func (sm *SessionManager) loadSessions() error {
 		var session Session
 		if err := json.Unmarshal(data, &session); err != nil {
 			continue
+		}
+
+		// Prune old MessageLog entries
+		if len(session.MessageLog) > 0 {
+			pruned := make([]MessageLogEntry, 0, len(session.MessageLog))
+			for _, e := range session.MessageLog {
+				if e.Timestamp.After(cutoff) {
+					pruned = append(pruned, e)
+				}
+			}
+			session.MessageLog = pruned
 		}
 
 		sm.sessions[session.Key] = &session
