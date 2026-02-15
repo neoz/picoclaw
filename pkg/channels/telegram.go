@@ -414,7 +414,8 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 		return ""
 	}
 
-	localPath := filepath.Join(mediaDir, file.FilePath[:min(16, len(file.FilePath))]+ext)
+	baseName := filepath.Base(file.FilePath)
+	localPath := filepath.Join(mediaDir, baseName[:min(16, len(baseName))]+ext)
 
 	if err := c.downloadFromURL(url, localPath); err != nil {
 		log.Printf("Failed to download file: %v", err)
