@@ -208,6 +208,7 @@ func DefaultConfig() *Config {
 		Heartbeat: HeartbeatConfig{
 			Enabled:         false,
 			IntervalSeconds: 1800,
+			Channel:         "telegram",
 		},
 		Tools: ToolsConfig{
 			Web: WebToolsConfig{
