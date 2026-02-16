@@ -132,7 +132,8 @@ type WebToolsConfig struct {
 }
 
 type ToolsConfig struct {
-	Web WebToolsConfig `json:"web"`
+	Web                WebToolsConfig `json:"web"`
+	RestrictToWorkspace *bool         `json:"restrict_to_workspace" env:"PICOCLAW_TOOLS_RESTRICT_TO_WORKSPACE"`
 }
 
 func DefaultConfig() *Config {
@@ -337,6 +338,15 @@ func (c *Config) GetChannelAllowFrom(channel string) []string {
 	default:
 		return nil
 	}
+}
+
+func (c *Config) IsRestrictToWorkspace() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.Tools.RestrictToWorkspace == nil {
+		return true // default: restricted
+	}
+	return *c.Tools.RestrictToWorkspace
 }
 
 func expandHome(path string) string {

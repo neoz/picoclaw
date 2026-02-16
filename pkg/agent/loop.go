@@ -57,10 +57,16 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	os.MkdirAll(workspace, 0755)
 
 	toolsRegistry := tools.NewToolRegistry()
-	toolsRegistry.Register(tools.NewReadFileTool(workspace))
-	toolsRegistry.Register(tools.NewWriteFileTool(workspace))
-	toolsRegistry.Register(tools.NewListDirTool(workspace))
-	toolsRegistry.Register(tools.NewExecTool(workspace))
+	allowedDir := workspace
+	if !cfg.IsRestrictToWorkspace() {
+		allowedDir = ""
+	}
+	toolsRegistry.Register(tools.NewReadFileTool(allowedDir))
+	toolsRegistry.Register(tools.NewWriteFileTool(allowedDir))
+	toolsRegistry.Register(tools.NewListDirTool(allowedDir))
+	execTool := tools.NewExecTool(workspace)
+	execTool.SetRestrictToWorkspace(cfg.IsRestrictToWorkspace())
+	toolsRegistry.Register(execTool)
 
 	ollamaAPIKey := cfg.Tools.Web.Ollama.APIKey
 	if ollamaAPIKey != "" {
@@ -92,7 +98,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	toolsRegistry.Register(spawnTool)
 
 	// Register edit file tool
-	editFileTool := tools.NewEditFileTool(workspace)
+	editFileTool := tools.NewEditFileTool(allowedDir)
 	toolsRegistry.Register(editFileTool)
 
 	sessionsManager := session.NewSessionManager(filepath.Join(workspace, "sessions"))
