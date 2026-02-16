@@ -341,7 +341,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 		// Bot is mentioned or replied to - check temp allow for non-allowed users
 		if !allowed {
-			if c.consumeTempAllow(chatID, user) {
+			if c.config.AllowTemp && c.consumeTempAllow(chatID, user) {
 				allowed = true
 				log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
 			} else {
@@ -361,7 +361,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 	// Grant one-time temp allow for other users mentioned in this message
 	// Only permanently allowed users can grant temp access
-	if isGroup && c.IsAllowed(senderID) {
+	if isGroup && c.config.AllowTemp && c.IsAllowed(senderID) {
 		c.grantTempAllows(chatID, message)
 	}
 
