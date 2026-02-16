@@ -140,7 +140,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				continue
 			}
 
-			al.sessions.AddToLog(msg.SessionKey, msg.Content, msg.SenderID)
+			senderName := msg.Metadata["first_name"]
+			if uname := msg.Metadata["username"]; uname != "" {
+				senderName = uname
+			}
+			al.sessions.AddToLog(msg.SessionKey, msg.Content, msg.SenderID, senderName)
 
 			if msg.Metadata["observe_only"] == "true" {
 				continue
@@ -294,7 +298,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 
 	// 6. Save final assistant message to session
 	al.sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
-	al.sessions.AddToLog(opts.SessionKey, finalContent, "assistant")
+	al.sessions.AddToLog(opts.SessionKey, finalContent, "assistant", "")
 	al.sessions.Save(al.sessions.GetOrCreate(opts.SessionKey))
 
 	// 7. Optional: summarization

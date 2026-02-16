@@ -123,7 +123,11 @@ func formatLogEntries(entries []session.MessageLogEntry) string {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		b.WriteString(fmt.Sprintf("[%s] %s: %s", e.Timestamp.Format("2006-01-02 15:04"), e.SenderID, e.Content))
+		sender := e.SenderID
+		if e.SenderName != "" {
+			sender = e.SenderName
+		}
+		b.WriteString(fmt.Sprintf("[%s] %s: %s", e.Timestamp.Format("2006-01-02 15:04"), sender, e.Content))
 	}
 	return b.String()
 }
