@@ -73,6 +73,10 @@
     "vllm": {
       "api_key": "",
       "api_base": ""
+    },
+    "nvidia": {
+      "api_key": "",
+      "api_base": ""
     }
   },
   "tools": {
@@ -80,11 +84,20 @@
       "search": {
         "api_key": "YOUR_BRAVE_API_KEY",
         "max_results": 5
+      },
+      "ollama": {
+        "api_key": "",
+        "max_results": 5
       }
     }
   },
   "gateway": {
     "host": "0.0.0.0",
     "port": 18790
+  },
+  "heartbeat": {
+    "enabled": false,
+    "interval_seconds": 1800,
+    "channel": "telegram"
   }
 }

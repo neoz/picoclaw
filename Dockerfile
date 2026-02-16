@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /bin/picocla
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata su-exec
 
 RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
 
@@ -23,14 +23,14 @@ RUN mkdir -p /home/picoclaw/.picoclaw/workspace/memory \
              /home/picoclaw/.picoclaw/workspace/skills \
              /home/picoclaw/.picoclaw/workspace/sessions \
              /home/picoclaw/.picoclaw/workspace/cron \
-             /home/picoclaw/.picoclaw/workspace/stm \
     && chown -R picoclaw:picoclaw /home/picoclaw/.picoclaw
 
 COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
 
-USER picoclaw
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 18790
 
-ENTRYPOINT ["picoclaw"]
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["gateway"]
