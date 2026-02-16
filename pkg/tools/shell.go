@@ -30,6 +30,13 @@ func NewExecTool(workingDir string) *ExecTool {
 		regexp.MustCompile(`>\s*/dev/sd[a-z]\b`),            // Block writes to disk devices (but allow /dev/null)
 		regexp.MustCompile(`\b(shutdown|reboot|poweroff)\b`),
 		regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`),
+		// Sensitive file access patterns
+		regexp.MustCompile(`\.picoclaw/config\b`),                             // picoclaw config (contains API keys)
+		regexp.MustCompile(`/etc/(shadow|gshadow|master\.passwd)\b`),          // password databases
+		regexp.MustCompile(`/\.(ssh|gnupg)/`),                                 // SSH and GPG keys
+		regexp.MustCompile(`\.(pem|p12|pfx|key|keystore|jks)\b`),             // private key files
+		regexp.MustCompile(`\bcurl\b.*\b(--data|--upload-file|-d|-F|-T)\b`),   // data exfiltration via curl
+		regexp.MustCompile(`\bwget\b.*\b--post-(data|file)\b`),               // data exfiltration via wget
 	}
 
 	return &ExecTool{
@@ -37,7 +44,7 @@ func NewExecTool(workingDir string) *ExecTool {
 		timeout:             60 * time.Second,
 		denyPatterns:        denyPatterns,
 		allowPatterns:       nil,
-		restrictToWorkspace: false,
+		restrictToWorkspace: true,
 	}
 }
 
@@ -46,7 +53,7 @@ func (t *ExecTool) Name() string {
 }
 
 func (t *ExecTool) Description() string {
-	return "Execute a shell command and return its output. Use with caution."
+	return "Execute a shell command within the workspace directory. Commands accessing paths outside the workspace are blocked."
 }
 
 func (t *ExecTool) Parameters() map[string]interface{} {
@@ -74,6 +81,19 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]interface{}) (st
 
 	cwd := t.workingDir
 	if wd, ok := args["working_dir"].(string); ok && wd != "" {
+		if t.restrictToWorkspace && t.workingDir != "" {
+			// Validate working_dir is within the workspace
+			absWd, err := filepath.Abs(wd)
+			if err == nil {
+				absWorkspace, err := filepath.Abs(t.workingDir)
+				if err == nil {
+					rel, err := filepath.Rel(absWorkspace, absWd)
+					if err != nil || strings.HasPrefix(rel, "..") {
+						return "Error: Command blocked by safety guard (working_dir outside workspace)", nil
+					}
+				}
+			}
+		}
 		cwd = wd
 	}
 
@@ -158,8 +178,20 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return ""
 		}
 
+		// Expand ~ and $HOME before path checking to prevent bypass
+		expandedCmd := cmd
+		if home, err := os.UserHomeDir(); err == nil {
+			expandedCmd = strings.ReplaceAll(expandedCmd, "~/", home+"/")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "$HOME/", home+"/")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "${HOME}/", home+"/")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "$HOME\"", home+"\"")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "$HOME'", home+"'")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "${HOME}\"", home+"\"")
+			expandedCmd = strings.ReplaceAll(expandedCmd, "${HOME}'", home+"'")
+		}
+
 		pathPattern := regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
-		matches := pathPattern.FindAllString(cmd, -1)
+		matches := pathPattern.FindAllString(expandedCmd, -1)
 
 		for _, raw := range matches {
 			p, err := filepath.Abs(raw)
