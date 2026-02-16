@@ -19,11 +19,7 @@ RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
 
 COPY --from=builder /bin/picoclaw /usr/local/bin/picoclaw
 
-RUN mkdir -p /home/picoclaw/.picoclaw/workspace/memory \
-             /home/picoclaw/.picoclaw/workspace/skills \
-             /home/picoclaw/.picoclaw/workspace/sessions \
-             /home/picoclaw/.picoclaw/workspace/cron \
-    && chown -R picoclaw:picoclaw /home/picoclaw/.picoclaw
+RUN su-exec picoclaw picoclaw onboard
 
 COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
 
