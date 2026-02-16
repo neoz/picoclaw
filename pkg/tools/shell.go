@@ -194,6 +194,11 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 		matches := pathPattern.FindAllString(expandedCmd, -1)
 
 		for _, raw := range matches {
+			// Allow read-only system virtual filesystems
+			if isSafeSystemPath(raw) {
+				continue
+			}
+
 			p, err := filepath.Abs(raw)
 			if err != nil {
 				continue
@@ -211,6 +216,30 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	}
 
 	return ""
+}
+
+// safeSystemPrefixes are read-only virtual filesystem paths safe to access
+// even when restrictToWorkspace is enabled.
+var safeSystemPrefixes = []string{
+	"/sys/class/",
+	"/sys/devices/",
+	"/proc/cpuinfo",
+	"/proc/meminfo",
+	"/proc/uptime",
+	"/proc/loadavg",
+	"/proc/version",
+	"/proc/stat",
+	"/proc/net/",
+	"/dev/null",
+}
+
+func isSafeSystemPath(path string) bool {
+	for _, prefix := range safeSystemPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *ExecTool) SetTimeout(timeout time.Duration) {
