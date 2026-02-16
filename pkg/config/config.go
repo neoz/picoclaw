@@ -57,6 +57,7 @@ type TelegramConfig struct {
 	Enabled   bool     `json:"enabled" env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
 	Token     string   `json:"token" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
 	AllowFrom []string `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	AllowTemp bool     `json:"allow_temp" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_TEMP"`
 }
 
 type FeishuConfig struct {
