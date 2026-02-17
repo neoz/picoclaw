@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -231,6 +232,7 @@ func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: config file not found at %s, using defaults\n", path)
 			return cfg, nil
 		}
 		return nil, err

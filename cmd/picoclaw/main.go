@@ -34,6 +34,8 @@ import (
 const version = "0.1.0"
 const logo = "🦞"
 
+var customConfigPath string
+
 func copyDirectory(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -69,6 +71,19 @@ func copyDirectory(src, dst string) error {
 }
 
 func main() {
+	// Parse global --config / -c flag before subcommand
+	var filteredArgs []string
+	for i := 1; i < len(os.Args); i++ {
+		if (os.Args[i] == "--config" || os.Args[i] == "-c") && i+1 < len(os.Args) {
+			customConfigPath = os.Args[i+1]
+			i++
+		} else {
+			filteredArgs = append(filteredArgs, os.Args[i])
+		}
+	}
+	// Rebuild os.Args with global flags removed
+	os.Args = append([]string{os.Args[0]}, filteredArgs...)
+
 	if len(os.Args) < 2 {
 		printHelp()
 		os.Exit(1)
@@ -147,7 +162,10 @@ func main() {
 
 func printHelp() {
 	fmt.Printf("%s picoclaw - Personal AI Assistant v%s\n\n", logo, version)
-	fmt.Println("Usage: picoclaw <command>")
+	fmt.Println("Usage: picoclaw [--config <path>] <command>")
+	fmt.Println()
+	fmt.Println("Global flags:")
+	fmt.Println("  -c, --config <path>  Path to config file (default: ~/.picoclaw/config.json)")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  onboard     Initialize picoclaw configuration and workspace")
@@ -706,6 +724,9 @@ func statusCmd() {
 }
 
 func getConfigPath() string {
+	if customConfigPath != "" {
+		return customConfigPath
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".picoclaw", "config.json")
 }
