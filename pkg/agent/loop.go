@@ -165,6 +165,9 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		}
 	}
 
+	// Register cost summary tool
+	toolsRegistry.Register(tools.NewCostSummaryTool(costTracker))
+
 	return &AgentLoop{
 		bus:            msgBus,
 		provider:       provider,
