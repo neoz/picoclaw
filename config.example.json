@@ -49,35 +49,43 @@
   "providers": {
     "anthropic": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "openai": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "groq": {
       "api_key": "gsk_xxx",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "zhipu": {
       "api_key": "YOUR_ZHIPU_API_KEY",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "gemini": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "vllm": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "nvidia": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     }
   },
   "tools": {
