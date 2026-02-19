@@ -1,0 +1,126 @@
+package memory
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+// SearchResult represents a search hit with its BM25 rank.
+type SearchResult struct {
+	Entry MemoryEntry
+	Rank  float64
+}
+
+// Search performs FTS5 full-text search with BM25 ranking.
+func (m *MemoryDB) Search(query string, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	ftsQuery := sanitizeFTS5Query(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
+
+	rows, err := m.db.Query(`
+		SELECT m.id, m.key, m.content, m.category, m.created_at, m.updated_at,
+			rank
+		FROM memories_fts
+		JOIN memories m ON memories_fts.rowid = m.id
+		WHERE memories_fts MATCH ?
+		ORDER BY rank
+		LIMIT ?
+	`, ftsQuery, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search memories: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSearchResults(rows)
+}
+
+// SearchByCategory performs FTS5 search filtered by category.
+func (m *MemoryDB) SearchByCategory(query, category string, limit int) ([]SearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	ftsQuery := sanitizeFTS5Query(query)
+	if ftsQuery == "" {
+		return nil, nil
+	}
+
+	rows, err := m.db.Query(`
+		SELECT m.id, m.key, m.content, m.category, m.created_at, m.updated_at,
+			rank
+		FROM memories_fts
+		JOIN memories m ON memories_fts.rowid = m.id
+		WHERE memories_fts MATCH ? AND m.category = ?
+		ORDER BY rank
+		LIMIT ?
+	`, ftsQuery, category, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search memories by category: %w", err)
+	}
+	defer rows.Close()
+
+	return scanSearchResults(rows)
+}
+
+func scanSearchResults(rows interface {
+	Next() bool
+	Scan(dest ...interface{}) error
+}) ([]SearchResult, error) {
+	var results []SearchResult
+	for rows.Next() {
+		var result SearchResult
+		var createdAt, updatedAt string
+		if err := rows.Scan(
+			&result.Entry.ID, &result.Entry.Key, &result.Entry.Content,
+			&result.Entry.Category, &createdAt, &updatedAt, &result.Rank,
+		); err != nil {
+			continue
+		}
+		result.Entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		result.Entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+// sanitizeFTS5Query escapes special FTS5 characters and wraps tokens in quotes.
+func sanitizeFTS5Query(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ""
+	}
+
+	// Split into tokens and wrap each in quotes to handle special chars
+	tokens := strings.Fields(query)
+	var quoted []string
+	for _, t := range tokens {
+		// Remove FTS5 special characters
+		t = strings.NewReplacer(
+			"*", "",
+			"\"", "",
+			"(", "",
+			")", "",
+			":", "",
+			"^", "",
+			"{", "",
+			"}", "",
+		).Replace(t)
+		t = strings.TrimSpace(t)
+		if t != "" {
+			quoted = append(quoted, "\""+t+"\"")
+		}
+	}
+
+	if len(quoted) == 0 {
+		return ""
+	}
+
+	// Join with OR for broader matching
+	return strings.Join(quoted, " OR ")
+}

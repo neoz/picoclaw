@@ -20,6 +20,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -38,6 +39,8 @@ type AgentLoop struct {
 	tools          *tools.ToolRegistry
 	running        atomic.Bool
 	summarizing    sync.Map      // Tracks which sessions are currently being summarized
+	memoryDB       *memory.MemoryDB
+	memoryCfg      *config.MemoryConfig
 }
 
 // processOptions configures how a message is processed
@@ -106,24 +109,62 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 	// Register message history tool (backed by session manager)
 	toolsRegistry.Register(tools.NewSTMTool(sessionsManager))
 
-	// Register memory search tool
-	toolsRegistry.Register(tools.NewMemorySearchTool(workspace))
+	// Initialize memory database
+	memDB, err := memory.Open(workspace)
+	if err != nil {
+		logger.ErrorCF("memory", "Failed to open memory database, continuing without memory",
+			map[string]interface{}{"error": err.Error()})
+	}
+
+	if memDB != nil {
+		// One-time migration from markdown files
+		memoryDir := filepath.Join(workspace, "memory")
+		if migErr := memDB.MigrateFromMarkdown(memoryDir); migErr != nil {
+			logger.ErrorCF("memory", "Failed to migrate markdown memory",
+				map[string]interface{}{"error": migErr.Error()})
+		}
+
+		// Run retention cleanup on startup
+		retentionMap := map[string]int{
+			"daily":        cfg.Memory.RetentionDays.Daily,
+			"conversation": cfg.Memory.RetentionDays.Conversation,
+			"custom":       cfg.Memory.RetentionDays.Custom,
+		}
+		if deleted, retErr := memDB.RunRetention(retentionMap); retErr != nil {
+			logger.ErrorCF("memory", "Retention cleanup failed",
+				map[string]interface{}{"error": retErr.Error()})
+		} else if deleted > 0 {
+			logger.InfoCF("memory", "Retention cleanup completed",
+				map[string]interface{}{"deleted": deleted})
+		}
+
+		// Register memory tools
+		toolsRegistry.Register(tools.NewMemoryStoreTool(memDB))
+		toolsRegistry.Register(tools.NewMemoryForgetTool(memDB))
+		toolsRegistry.Register(tools.NewMemorySearchTool(memDB))
+	}
 
 	// Create context builder and set tools registry
 	contextBuilder := NewContextBuilder(workspace)
 	contextBuilder.SetToolsRegistry(toolsRegistry)
+
+	if memDB != nil {
+		contextBuilder.SetMemoryDB(memDB, &cfg.Memory)
+	}
 
 	return &AgentLoop{
 		bus:            msgBus,
 		provider:       provider,
 		workspace:      workspace,
 		model:          cfg.Agents.Defaults.Model,
-		contextWindow:  cfg.Agents.Defaults.MaxTokens, // Restore context window for summarization
+		contextWindow:  cfg.Agents.Defaults.MaxTokens,
 		maxIterations:  cfg.Agents.Defaults.MaxToolIterations,
 		sessions:       sessionsManager,
 		contextBuilder: contextBuilder,
 		tools:          toolsRegistry,
 		summarizing:    sync.Map{},
+		memoryDB:       memDB,
+		memoryCfg:      &cfg.Memory,
 	}
 }
 
@@ -175,6 +216,28 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+}
+
+// Shutdown performs cleanup: optional snapshot export and closes the memory DB.
+func (al *AgentLoop) Shutdown() {
+	if al.memoryDB == nil {
+		return
+	}
+
+	if al.memoryCfg != nil && al.memoryCfg.SnapshotOnExit {
+		snapshotPath := filepath.Join(al.workspace, "memory", "MEMORY_SNAPSHOT.md")
+		if err := al.memoryDB.ExportSnapshot(snapshotPath); err != nil {
+			logger.ErrorCF("memory", "Failed to export snapshot on shutdown",
+				map[string]interface{}{"error": err.Error()})
+		} else {
+			logger.InfoC("memory", "Memory snapshot exported on shutdown")
+		}
+	}
+
+	if err := al.memoryDB.Close(); err != nil {
+		logger.ErrorCF("memory", "Failed to close memory database",
+			map[string]interface{}{"error": err.Error()})
+	}
 }
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -284,6 +347,12 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 
 	// 3. Save user message to session
 	al.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
+
+	// 3.5. Auto-save conversation to memory if enabled
+	if al.memoryCfg != nil && al.memoryCfg.AutoSave && al.memoryDB != nil {
+		convKey := fmt.Sprintf("conv_%s_%s_%d", opts.Channel, opts.ChatID, time.Now().Unix())
+		al.memoryDB.Store(convKey, opts.UserMessage, "conversation")
+	}
 
 	// 4. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts)

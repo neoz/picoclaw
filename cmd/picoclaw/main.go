@@ -335,38 +335,12 @@ Discussions: https://github.com/sipeed/picoclaw/discussions
 
 	memoryDir := filepath.Join(workspace, "memory")
 	os.MkdirAll(memoryDir, 0755)
-	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
-	if _, err := os.Stat(memoryFile); os.IsNotExist(err) {
-		memoryContent := `# Long-term Memory
+	fmt.Println("  Created memory/ (SQLite database will be initialized on first run)")
 
-This file stores important information that should persist across sessions.
-
-## User Information
-
-(Important facts about user)
-
-## Preferences
-
-(User preferences learned over time)
-
-## Important Notes
-
-(Things to remember)
-
-## Configuration
-
-- Model preferences
-- Channel settings
-- Skills enabled
-`
-		os.WriteFile(memoryFile, []byte(memoryContent), 0644)
-		fmt.Println("  Created memory/MEMORY.md")
-
-		skillsDir := filepath.Join(workspace, "skills")
-		if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
-			os.MkdirAll(skillsDir, 0755)
-			fmt.Println("  Created skills/")
-		}
+	skillsDir := filepath.Join(workspace, "skills")
+	if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
+		os.MkdirAll(skillsDir, 0755)
+		fmt.Println("  Created skills/")
 	}
 
 	for filename, content := range templates {
@@ -664,6 +638,7 @@ func gatewayCmd() {
 	heartbeatService.Stop()
 	cronService.Stop()
 	agentLoop.Stop()
+	agentLoop.Shutdown()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
 }

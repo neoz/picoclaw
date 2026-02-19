@@ -109,5 +109,17 @@
     "enabled": false,
     "interval_seconds": 1800,
     "channel": "telegram"
+  },
+  "memory": {
+    "retention_days": {
+      "daily": 30,
+      "conversation": 7,
+      "custom": 90
+    },
+    "search_limit": 20,
+    "min_relevance": 0.1,
+    "context_top_k": 10,
+    "auto_save": false,
+    "snapshot_on_exit": false
   }
 }

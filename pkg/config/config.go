@@ -17,7 +17,23 @@ type Config struct {
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
+	Memory    MemoryConfig    `json:"memory"`
 	mu        sync.RWMutex
+}
+
+type MemoryRetentionConfig struct {
+	Daily        int `json:"daily" env:"PICOCLAW_MEMORY_RETENTION_DAILY"`
+	Conversation int `json:"conversation" env:"PICOCLAW_MEMORY_RETENTION_CONVERSATION"`
+	Custom       int `json:"custom" env:"PICOCLAW_MEMORY_RETENTION_CUSTOM"`
+}
+
+type MemoryConfig struct {
+	RetentionDays  MemoryRetentionConfig `json:"retention_days"`
+	SearchLimit    int                   `json:"search_limit" env:"PICOCLAW_MEMORY_SEARCH_LIMIT"`
+	MinRelevance   float64               `json:"min_relevance" env:"PICOCLAW_MEMORY_MIN_RELEVANCE"`
+	ContextTopK    int                   `json:"context_top_k" env:"PICOCLAW_MEMORY_CONTEXT_TOP_K"`
+	AutoSave       bool                  `json:"auto_save" env:"PICOCLAW_MEMORY_AUTO_SAVE"`
+	SnapshotOnExit bool                  `json:"snapshot_on_exit" env:"PICOCLAW_MEMORY_SNAPSHOT_ON_EXIT"`
 }
 
 type HeartbeatConfig struct {
@@ -223,6 +239,18 @@ func DefaultConfig() *Config {
 					MaxResults: 5,
 				},
 			},
+		},
+		Memory: MemoryConfig{
+			RetentionDays: MemoryRetentionConfig{
+				Daily:        30,
+				Conversation: 7,
+				Custom:       90,
+			},
+			SearchLimit:    20,
+			MinRelevance:   0.1,
+			ContextTopK:    10,
+			AutoSave:       false,
+			SnapshotOnExit: false,
 		},
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -17,8 +19,9 @@ import (
 type ContextBuilder struct {
 	workspace    string
 	skillsLoader *skills.SkillsLoader
-	memory       *MemoryStore
-	tools        *tools.ToolRegistry // Direct reference to tool registry
+	tools        *tools.ToolRegistry
+	memoryDB     *memory.MemoryDB
+	memoryCfg    *config.MemoryConfig
 }
 
 func getGlobalConfigDir() string {
@@ -39,13 +42,18 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace:    workspace,
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:       NewMemoryStore(workspace),
 	}
 }
 
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
 func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 	cb.tools = registry
+}
+
+// SetMemoryDB sets the memory database and config for relevance-filtered context.
+func (cb *ContextBuilder) SetMemoryDB(db *memory.MemoryDB, cfg *config.MemoryConfig) {
+	cb.memoryDB = db
+	cb.memoryCfg = cfg
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -56,7 +64,7 @@ func (cb *ContextBuilder) getIdentity() string {
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# picoclaw 🦞
+	return fmt.Sprintf(`# picoclaw
 
 You are picoclaw, a helpful AI assistant.
 
@@ -68,8 +76,7 @@ You are picoclaw, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
+- Memory: SQLite database (use memory_store/memory_search/memory_forget tools)
 - Skills: %s/skills/{skill-name}/SKILL.md
 
 %s
@@ -80,8 +87,28 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
-		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+3. **Memory Management** - You have a persistent memory database that survives across sessions. Use it actively:
+
+   **When to STORE (memory_store):**
+   - User says "remember", "save this", "don't forget" -> store immediately
+   - You learn user facts (name, location, timezone, birthday, job, preferences) -> store as "core"
+   - A task is completed, a decision is made, or an important event happens -> store as "daily"
+   - You want to save conversation context for short-term follow-up -> store as "conversation"
+   - To UPDATE existing info, use the same key -- it overwrites the old content
+
+   **When to SEARCH (memory_search):**
+   - User asks "do you remember", "what did I say", "what was that" -> search first
+   - User references past events, preferences, or previous conversations -> search first
+   - Before answering any question that might have been discussed before -> search first
+   - When unsure about user preferences or context -> search to check
+
+   **When to FORGET (memory_forget):**
+   - User says "forget this", "delete that", "that's wrong" -> delete the key
+   - You stored something incorrect -> delete and re-store with correct content
+
+   **Key naming:** Use descriptive, namespaced keys: "user_name", "user_timezone", "task_project_x_deadline", "pref_language"
+   **Categories:** "core" = permanent, "daily" = 30 days, "conversation" = 7 days, "custom" = 90 days`,
+		now, runtime, workspacePath, workspacePath, toolsSection)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
@@ -128,11 +155,7 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 %s`, skillsSummary))
 	}
 
-	// Memory context
-	memoryContext := cb.memory.GetMemoryContext()
-	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
-	}
+	// Memory context is now injected per-message via buildRelevantMemoryContext()
 
 	// Join with "---" separator
 	return strings.Join(parts, "\n\n---\n\n")
@@ -157,10 +180,81 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	return result
 }
 
+// buildRelevantMemoryContext returns memory context relevant to the user message.
+func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string {
+	if cb.memoryDB == nil {
+		return ""
+	}
+
+	topK := 10
+	minRelevance := 0.1
+	if cb.memoryCfg != nil {
+		if cb.memoryCfg.ContextTopK > 0 {
+			topK = cb.memoryCfg.ContextTopK
+		}
+		if cb.memoryCfg.MinRelevance > 0 {
+			minRelevance = cb.memoryCfg.MinRelevance
+		}
+	}
+
+	// Collect recent core memories
+	coreEntries, _ := cb.memoryDB.List("core", 20)
+	seenKeys := make(map[string]bool)
+
+	var parts []string
+
+	if len(coreEntries) > 0 {
+		var sb strings.Builder
+		sb.WriteString("## Core Memories\n\n")
+		for _, e := range coreEntries {
+			seenKeys[e.Key] = true
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+		}
+		parts = append(parts, sb.String())
+	}
+
+	// FTS5 search for relevant memories
+	if userMessage != "" {
+		results, err := cb.memoryDB.Search(userMessage, topK)
+		if err == nil && len(results) > 0 {
+			var sb strings.Builder
+			sb.WriteString("## Relevant Memories\n\n")
+			added := 0
+			for _, r := range results {
+				// FTS5 rank is negative (lower = more relevant), filter by absolute value
+				if r.Rank < -minRelevance || r.Rank == 0 {
+					// Skip if already in core list
+					if seenKeys[r.Entry.Key] {
+						continue
+					}
+					seenKeys[r.Entry.Key] = true
+					sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", r.Entry.Key, r.Entry.Category, r.Entry.Content))
+					added++
+				}
+			}
+			if added > 0 {
+				parts = append(parts, sb.String())
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "# Memory\n\n" + strings.Join(parts, "\n")
+}
+
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {
 	messages := []providers.Message{}
 
 	systemPrompt := cb.BuildSystemPrompt()
+
+	// Append relevance-filtered memory context
+	memoryContext := cb.buildRelevantMemoryContext(currentMessage)
+	if memoryContext != "" {
+		systemPrompt += "\n\n---\n\n" + memoryContext
+	}
 
 	// Add Current Session info if provided
 	if channel != "" && chatID != "" {

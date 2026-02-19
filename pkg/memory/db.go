@@ -1,0 +1,144 @@
+package memory
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// MemoryEntry represents a single memory record.
+type MemoryEntry struct {
+	ID        int64
+	Key       string
+	Content   string
+	Category  string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// ValidCategories defines the allowed memory categories.
+var ValidCategories = map[string]bool{
+	"core":         true,
+	"daily":        true,
+	"conversation": true,
+	"custom":       true,
+}
+
+// MemoryDB manages the SQLite-backed memory database.
+type MemoryDB struct {
+	db        *sql.DB
+	workspace string
+	dbPath    string
+}
+
+// Open creates or opens the memory database at workspace/memory/memory.db.
+func Open(workspace string) (*MemoryDB, error) {
+	memoryDir := filepath.Join(workspace, "memory")
+	if err := os.MkdirAll(memoryDir, 0755); err != nil {
+		return nil, fmt.Errorf("create memory dir: %w", err)
+	}
+
+	dbPath := filepath.Join(memoryDir, "memory.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+
+	// Enable WAL mode for better concurrent read performance
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	mdb := &MemoryDB{
+		db:        db,
+		workspace: workspace,
+		dbPath:    dbPath,
+	}
+
+	if err := mdb.createSchema(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create schema: %w", err)
+	}
+
+	return mdb, nil
+}
+
+// Close closes the database connection.
+func (m *MemoryDB) Close() error {
+	if m.db != nil {
+		return m.db.Close()
+	}
+	return nil
+}
+
+// DBPath returns the path to the database file.
+func (m *MemoryDB) DBPath() string {
+	return m.dbPath
+}
+
+// Workspace returns the workspace path.
+func (m *MemoryDB) Workspace() string {
+	return m.workspace
+}
+
+func (m *MemoryDB) createSchema() error {
+	schema := `
+	CREATE TABLE IF NOT EXISTS memories (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		key        TEXT UNIQUE NOT NULL,
+		content    TEXT NOT NULL,
+		category   TEXT NOT NULL DEFAULT 'core',
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	);
+
+	CREATE TABLE IF NOT EXISTS metadata (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+
+	CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+		key,
+		content,
+		category,
+		content='memories',
+		content_rowid='id'
+	);
+
+	-- Triggers to keep FTS in sync
+	CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+		INSERT INTO memories_fts(rowid, key, content, category)
+		VALUES (new.id, new.key, new.content, new.category);
+	END;
+
+	CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+		VALUES ('delete', old.id, old.key, old.content, old.category);
+	END;
+
+	CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+		VALUES ('delete', old.id, old.key, old.content, old.category);
+		INSERT INTO memories_fts(rowid, key, content, category)
+		VALUES (new.id, new.key, new.content, new.category);
+	END;
+	`
+	_, err := m.db.Exec(schema)
+	return err
+}
+
+// validateCategory checks if the category is valid, defaults to "core".
+func validateCategory(category string) string {
+	if category == "" {
+		return "core"
+	}
+	if ValidCategories[category] {
+		return category
+	}
+	return "core"
+}

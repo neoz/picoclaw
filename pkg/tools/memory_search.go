@@ -3,17 +3,17 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemorySearchTool struct {
-	workspace string
+	db *memory.MemoryDB
 }
 
-func NewMemorySearchTool(workspace string) *MemorySearchTool {
-	return &MemorySearchTool{workspace: workspace}
+func NewMemorySearchTool(db *memory.MemoryDB) *MemorySearchTool {
+	return &MemorySearchTool{db: db}
 }
 
 func (t *MemorySearchTool) Name() string {
@@ -21,7 +21,7 @@ func (t *MemorySearchTool) Name() string {
 }
 
 func (t *MemorySearchTool) Description() string {
-	return "Search across all long-term memory files (MEMORY.md and daily notes) using BM25 ranking. Use this to recall past events, decisions, or information from any date."
+	return "Search across all memory entries using full-text search with BM25 ranking. Use this to recall past events, decisions, or information. Supports optional category filter."
 }
 
 func (t *MemorySearchTool) Parameters() map[string]interface{} {
@@ -30,7 +30,12 @@ func (t *MemorySearchTool) Parameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "Search query to find in memory files",
+				"description": "Search query to find in memory",
+			},
+			"category": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: filter by category (core, daily, conversation, custom)",
+				"enum":        []string{"core", "daily", "conversation", "custom"},
 			},
 			"limit": map[string]interface{}{
 				"type":        "number",
@@ -39,11 +44,6 @@ func (t *MemorySearchTool) Parameters() map[string]interface{} {
 		},
 		"required": []string{"query"},
 	}
-}
-
-type memoryParagraph struct {
-	Source  string
-	Content string
 }
 
 func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -57,66 +57,35 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		limit = int(l)
 	}
 
-	memoryDir := filepath.Join(t.workspace, "memory")
-	paragraphs := collectMemoryParagraphs(memoryDir)
-	if len(paragraphs) == 0 {
-		return "No memory files found.", nil
+	category, _ := args["category"].(string)
+
+	var results []memory.SearchResult
+	var err error
+	if category != "" {
+		results, err = t.db.SearchByCategory(query, category, limit)
+	} else {
+		results, err = t.db.Search(query, limit)
 	}
 
-	docs := make([]string, len(paragraphs))
-	for i, p := range paragraphs {
-		docs[i] = p.Content
+	if err != nil {
+		return fmt.Sprintf("Error searching memory: %v", err), nil
 	}
-	indices := bm25Rank(docs, query, limit)
-	if len(indices) == 0 {
+
+	if len(results) == 0 {
 		return "No matching results found.", nil
 	}
 
 	var b strings.Builder
-	for i, idx := range indices {
+	for i, r := range results {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		b.WriteString(fmt.Sprintf("[%s]\n%s", paragraphs[idx].Source, paragraphs[idx].Content))
+		b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
+			r.Entry.Key,
+			r.Entry.Category,
+			r.Entry.UpdatedAt.Format("2006-01-02"),
+			r.Entry.Content,
+		))
 	}
 	return b.String(), nil
 }
-
-func collectMemoryParagraphs(memoryDir string) []memoryParagraph {
-	var paragraphs []memoryParagraph
-
-	filepath.Walk(memoryDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(strings.ToLower(info.Name()), ".md") {
-			return nil
-		}
-
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil
-		}
-
-		relPath, _ := filepath.Rel(memoryDir, path)
-		content := string(data)
-
-		// Split into paragraphs by double newline
-		parts := strings.Split(content, "\n\n")
-		for _, part := range parts {
-			trimmed := strings.TrimSpace(part)
-			if trimmed == "" {
-				continue
-			}
-			paragraphs = append(paragraphs, memoryParagraph{
-				Source:  relPath,
-				Content: trimmed,
-			})
-		}
-
-		return nil
-	})
-
-	return paragraphs
-}
-
