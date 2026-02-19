@@ -18,7 +18,21 @@ type Config struct {
 	Tools     ToolsConfig     `json:"tools"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Memory    MemoryConfig    `json:"memory"`
+	Cost      CostConfig      `json:"cost"`
 	mu        sync.RWMutex
+}
+
+type ModelPriceConfig struct {
+	Input  float64 `json:"input"`
+	Output float64 `json:"output"`
+}
+
+type CostConfig struct {
+	Enabled        bool                        `json:"enabled" env:"PICOCLAW_COST_ENABLED"`
+	DailyLimitUSD  float64                     `json:"daily_limit_usd" env:"PICOCLAW_COST_DAILY_LIMIT_USD"`
+	MonthlyLimitUSD float64                    `json:"monthly_limit_usd" env:"PICOCLAW_COST_MONTHLY_LIMIT_USD"`
+	WarnAtPercent  float64                     `json:"warn_at_percent" env:"PICOCLAW_COST_WARN_AT_PERCENT"`
+	Prices         map[string]ModelPriceConfig `json:"prices"`
 }
 
 type MemoryRetentionConfig struct {
@@ -251,6 +265,13 @@ func DefaultConfig() *Config {
 			ContextTopK:    10,
 			AutoSave:       false,
 			SnapshotOnExit: false,
+		},
+		Cost: CostConfig{
+			Enabled:         false,
+			DailyLimitUSD:   0,
+			MonthlyLimitUSD: 0,
+			WarnAtPercent:   80,
+			Prices:          map[string]ModelPriceConfig{},
 		},
 	}
 }

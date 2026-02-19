@@ -22,6 +22,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/cost"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -695,6 +696,40 @@ func statusCmd() {
 		} else {
 			fmt.Println("vLLM/Local: not set")
 		}
+	}
+
+	// Cost tracking status
+	if cfg.Cost.Enabled {
+		fmt.Println("\nCost Tracking: enabled")
+		ct, err := cost.NewCostTracker(&cfg.Cost, workspace)
+		if err != nil {
+			fmt.Printf("  Error: %v\n", err)
+		} else if ct != nil {
+			summary := ct.GetSummary()
+			now := time.Now().UTC()
+			dailyCost := ct.GetDailyCost(now)
+			monthlyCost := ct.GetMonthlyCost(now.Year(), now.Month())
+			fmt.Printf("  Today:   $%.4f", dailyCost)
+			if cfg.Cost.DailyLimitUSD > 0 {
+				fmt.Printf(" / $%.2f limit", cfg.Cost.DailyLimitUSD)
+			}
+			fmt.Println()
+			fmt.Printf("  Month:   $%.4f", monthlyCost)
+			if cfg.Cost.MonthlyLimitUSD > 0 {
+				fmt.Printf(" / $%.2f limit", cfg.Cost.MonthlyLimitUSD)
+			}
+			fmt.Println()
+			fmt.Printf("  Session: $%.4f (%d requests)\n", summary.SessionCostUSD, summary.RequestCount)
+			if len(summary.ByModel) > 0 {
+				fmt.Println("  Models:")
+				for _, ms := range summary.ByModel {
+					fmt.Printf("    %s: $%.4f (%d reqs, %d tokens)\n",
+						ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens)
+				}
+			}
+		}
+	} else {
+		fmt.Println("\nCost Tracking: disabled")
 	}
 }
 

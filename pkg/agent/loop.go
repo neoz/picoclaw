@@ -19,6 +19,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/cost"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -41,6 +42,7 @@ type AgentLoop struct {
 	summarizing    sync.Map      // Tracks which sessions are currently being summarized
 	memoryDB       *memory.MemoryDB
 	memoryCfg      *config.MemoryConfig
+	costTracker    *cost.CostTracker
 }
 
 // processOptions configures how a message is processed
@@ -152,6 +154,17 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		contextBuilder.SetMemoryDB(memDB, &cfg.Memory)
 	}
 
+	// Initialize cost tracker
+	var costTracker *cost.CostTracker
+	if cfg.Cost.Enabled {
+		var costErr error
+		costTracker, costErr = cost.NewCostTracker(&cfg.Cost, workspace)
+		if costErr != nil {
+			logger.ErrorCF("cost", "Failed to initialize cost tracker, continuing without cost tracking",
+				map[string]interface{}{"error": costErr.Error()})
+		}
+	}
+
 	return &AgentLoop{
 		bus:            msgBus,
 		provider:       provider,
@@ -165,6 +178,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		summarizing:    sync.Map{},
 		memoryDB:       memDB,
 		memoryCfg:      &cfg.Memory,
+		costTracker:    costTracker,
 	}
 }
 
@@ -448,6 +462,21 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 				"tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
+		// Budget check before LLM call
+		if al.costTracker != nil {
+			check := al.costTracker.CheckBudget(0)
+			if check.Status == cost.BudgetExceeded {
+				msg := fmt.Sprintf("Budget exceeded: $%.4f / $%.4f %s limit",
+					check.CurrentUSD, check.LimitUSD, check.Period)
+				logger.ErrorCF("cost", msg, nil)
+				return msg, iteration, nil
+			}
+			if check.Status == cost.BudgetWarning {
+				logger.WarnCF("cost", fmt.Sprintf("Budget warning: $%.4f / $%.4f %s limit",
+					check.CurrentUSD, check.LimitUSD, check.Period), nil)
+			}
+		}
+
 		// Call LLM
 		response, err := al.provider.Chat(ctx, messages, providerToolDefs, al.model, map[string]interface{}{
 			"max_tokens":  8192,
@@ -461,6 +490,11 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					"error":     err.Error(),
 				})
 			return "", iteration, fmt.Errorf("LLM call failed: %w", err)
+		}
+
+		// Record usage after successful LLM call
+		if al.costTracker != nil && response.Usage != nil {
+			al.costTracker.RecordUsage(al.model, response.Usage.PromptTokens, response.Usage.CompletionTokens)
 		}
 
 		// Check if no tool calls - we're done
