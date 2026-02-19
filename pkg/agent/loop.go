@@ -350,8 +350,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 
 	// 3.5. Auto-save conversation to memory if enabled
 	if al.memoryCfg != nil && al.memoryCfg.AutoSave && al.memoryDB != nil {
-		convKey := fmt.Sprintf("conv_%s_%s_%d", opts.Channel, opts.ChatID, time.Now().Unix())
-		al.memoryDB.Store(convKey, opts.UserMessage, "conversation")
+		convKey := fmt.Sprintf("conv_%s_%s_%d", opts.Channel, opts.ChatID, time.Now().UnixMilli())
+		if err := al.memoryDB.Store(convKey, opts.UserMessage, "conversation"); err != nil {
+			logger.ErrorCF("memory", "Failed to auto-save conversation",
+				map[string]interface{}{"key": convKey, "error": err.Error()})
+		}
 	}
 
 	// 4. Run LLM iteration loop
