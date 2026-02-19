@@ -21,7 +21,7 @@ func (t *MemorySearchTool) Name() string {
 }
 
 func (t *MemorySearchTool) Description() string {
-	return "Search across all memory entries using full-text search with BM25 ranking. Use this to recall past events, decisions, or information. Supports optional category filter."
+	return "Search across all memory entries using full-text search with BM25 ranking. Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
 }
 
 func (t *MemorySearchTool) Parameters() map[string]interface{} {
@@ -42,15 +42,12 @@ func (t *MemorySearchTool) Parameters() map[string]interface{} {
 				"description": "Maximum number of results to return (default 10)",
 			},
 		},
-		"required": []string{"query"},
+		"required": []string{},
 	}
 }
 
 func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	query, _ := args["query"].(string)
-	if query == "" {
-		return "Error: 'query' parameter is required.", nil
-	}
 
 	limit := 10
 	if l, ok := args["limit"].(float64); ok && l > 0 {
@@ -58,6 +55,29 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 	}
 
 	category, _ := args["category"].(string)
+
+	// Empty query: fall back to listing recent entries
+	if strings.TrimSpace(query) == "" {
+		entries, err := t.db.List(category, limit)
+		if err != nil {
+			return fmt.Sprintf("Error listing memories: %v", err), nil
+		}
+		if len(entries) == 0 {
+			return "No memories found.", nil
+		}
+		var b strings.Builder
+		for i, e := range entries {
+			if i > 0 {
+				b.WriteString("\n---\n")
+			}
+			b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
+				e.Key, e.Category,
+				e.UpdatedAt.Format("2006-01-02"),
+				e.Content,
+			))
+		}
+		return b.String(), nil
+	}
 
 	var results []memory.SearchResult
 	var err error
