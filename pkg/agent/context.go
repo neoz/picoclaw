@@ -288,7 +288,10 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		Content: systemPrompt,
 	})
 
-	messages = append(messages, history...)
+	// Sanitize history to remove orphaned tool messages that would cause
+	// "tool_call_id is not found" API errors (e.g. after TruncateHistory
+	// slices in the middle of a tool call sequence).
+	messages = append(messages, sanitizeHistory(history)...)
 
 	messages = append(messages, providers.Message{
 		Role:    "user",
@@ -296,6 +299,72 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 	})
 
 	return messages
+}
+
+// sanitizeHistory removes orphaned tool-related messages from session history.
+// It ensures every "tool" result message has a preceding "assistant" message
+// with a matching tool call ID, and every "assistant" message with tool calls
+// has all its tool results following it.
+func sanitizeHistory(history []providers.Message) []providers.Message {
+	if len(history) == 0 {
+		return history
+	}
+
+	// Pass 1: collect valid tool_call_ids from assistant messages
+	validIDs := make(map[string]bool)
+	for _, msg := range history {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					validIDs[tc.ID] = true
+				}
+			}
+		}
+	}
+
+	// Pass 2: filter out orphaned tool result messages
+	result := make([]providers.Message, 0, len(history))
+	for _, msg := range history {
+		if msg.Role == "tool" {
+			if msg.ToolCallID == "" || !validIDs[msg.ToolCallID] {
+				continue
+			}
+		}
+		result = append(result, msg)
+	}
+
+	// Pass 3: collect remaining tool result IDs
+	answeredIDs := make(map[string]bool)
+	for _, msg := range result {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			answeredIDs[msg.ToolCallID] = true
+		}
+	}
+
+	// Pass 4: remove assistant messages whose tool calls have no matching results
+	final := make([]providers.Message, 0, len(result))
+	for _, msg := range result {
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			allAnswered := true
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && !answeredIDs[tc.ID] {
+					allAnswered = false
+					break
+				}
+			}
+			if !allAnswered {
+				// Keep as plain assistant message without tool calls
+				final = append(final, providers.Message{
+					Role:    "assistant",
+					Content: msg.Content,
+				})
+				continue
+			}
+		}
+		final = append(final, msg)
+	}
+
+	return final
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {
