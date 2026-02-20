@@ -139,8 +139,9 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Type     string `json:"type"`
 					Function *struct {
@@ -197,12 +198,44 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 		})
 	}
 
+	content := stripThinkTags(choice.Message.Content)
+	if content == "" && choice.Message.ReasoningContent != "" {
+		content = stripThinkTags(choice.Message.ReasoningContent)
+	}
+
 	return &LLMResponse{
-		Content:      choice.Message.Content,
-		ToolCalls:    toolCalls,
-		FinishReason: choice.FinishReason,
-		Usage:        apiResponse.Usage,
+		Content:          content,
+		ReasoningContent: choice.Message.ReasoningContent,
+		ToolCalls:        toolCalls,
+		FinishReason:     choice.FinishReason,
+		Usage:            apiResponse.Usage,
 	}, nil
+}
+
+// stripThinkTags removes <think>...</think> blocks from model output.
+// Some reasoning models (e.g. MiniMax) embed their chain-of-thought inline
+// in the content field rather than a separate reasoning_content field.
+func stripThinkTags(s string) string {
+	const openTag = "<think>"
+	const closeTag = "</think>"
+
+	result := strings.Builder{}
+	rest := s
+	for {
+		start := strings.Index(rest, openTag)
+		if start == -1 {
+			result.WriteString(rest)
+			break
+		}
+		result.WriteString(rest[:start])
+		end := strings.Index(rest[start:], closeTag)
+		if end == -1 {
+			// Unclosed tag: drop the rest to avoid leaking partial reasoning.
+			break
+		}
+		rest = rest[start+end+len(closeTag):]
+	}
+	return strings.TrimSpace(result.String())
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {
