@@ -6,7 +6,27 @@
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
-    }
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "Main Assistant",
+        "default": true
+      },
+      {
+        "id": "coder",
+        "name": "Code Assistant",
+        "model": "anthropic/claude-sonnet-4",
+        "workspace": "~/.picoclaw/workspace/coder",
+        "max_tokens": 16384,
+        "temperature": 0.3,
+        "max_tool_iterations": 30,
+        "skills": ["coding"],
+        "subagents": {
+          "allow_agents": ["main"]
+        }
+      }
+    ]
   },
   "channels": {
     "telegram": {

@@ -242,9 +242,7 @@ func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
 }
 
-func CreateProvider(cfg *config.Config) (LLMProvider, error) {
-	model := cfg.Agents.Defaults.Model
-
+func CreateProviderForModel(model string, cfg *config.Config) (LLMProvider, error) {
 	var apiKey, apiBase, userAgent string
 
 	lowerModel := strings.ToLower(model)
@@ -335,6 +333,10 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	}
 
 	return NewHTTPProvider(apiKey, apiBase, userAgent), nil
+}
+
+func CreateProvider(cfg *config.Config) (LLMProvider, error) {
+	return CreateProviderForModel(cfg.Agents.Defaults.Model, cfg)
 }
 
 // parseRetryDelay extracts retry delay from Retry-After header or response body.

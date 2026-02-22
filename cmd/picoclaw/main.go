@@ -26,7 +26,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/voice"
@@ -382,14 +381,12 @@ func agentCmd() {
 		os.Exit(1)
 	}
 
-	provider, err := providers.CreateProvider(cfg)
+	msgBus := bus.NewMessageBus()
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
 	if err != nil {
-		fmt.Printf("Error creating provider: %v\n", err)
+		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)
 	}
-
-	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
@@ -517,14 +514,12 @@ func gatewayCmd() {
 		os.Exit(1)
 	}
 
-	provider, err := providers.CreateProvider(cfg)
+	msgBus := bus.NewMessageBus()
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
 	if err != nil {
-		fmt.Printf("Error creating provider: %v\n", err)
+		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)
 	}
-
-	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
 	// Print agent startup info
 	fmt.Println("\n📦 Agent Status:")

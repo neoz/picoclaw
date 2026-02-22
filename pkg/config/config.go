@@ -58,6 +58,24 @@ type HeartbeatConfig struct {
 
 type AgentsConfig struct {
 	Defaults AgentDefaults `json:"defaults"`
+	List     []AgentConfig `json:"list,omitempty"`
+}
+
+type AgentConfig struct {
+	ID                string           `json:"id"`
+	Name              string           `json:"name,omitempty"`
+	Workspace         string           `json:"workspace,omitempty"`
+	Default           bool             `json:"default,omitempty"`
+	Model             string           `json:"model,omitempty"`
+	MaxTokens         int              `json:"max_tokens,omitempty"`
+	MaxToolIterations int              `json:"max_tool_iterations,omitempty"`
+	Temperature       *float64         `json:"temperature,omitempty"`
+	Skills            []string         `json:"skills,omitempty"`
+	Subagents         *SubagentsConfig `json:"subagents,omitempty"`
+}
+
+type SubagentsConfig struct {
+	AllowAgents []string `json:"allow_agents,omitempty"`
 }
 
 type AgentDefaults struct {

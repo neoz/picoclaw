@@ -1,0 +1,92 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+PicoClaw is an ultra-lightweight personal AI assistant written in Go, designed to run on minimal hardware ($10 boards, <10MB RAM). It provides AI agent capabilities including web search, file operations, scheduled tasks, and multi-channel messaging (Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp).
+
+## Build Commands
+
+Always use `make build` to verify compilation. If `make` is unavailable (e.g. Windows bash), fall back to `go build ./...`.
+
+```bash
+make build              # Build for current platform -> build/picoclaw-{os}-{arch}
+make build-all          # Cross-compile for linux-amd64, linux-arm64, linux-riscv64, windows-amd64
+make install            # Build + install binary to ~/.local/bin + copy builtin skills
+make install-skills     # Install builtin skills to ~/.picoclaw/workspace/skills
+make fmt                # Format Go code (go fmt ./...)
+make deps               # Update dependencies (go get -u ./... && go mod tidy)
+make clean              # Remove build artifacts
+make run ARGS="agent"   # Build and run with arguments
+```
+
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/channels/`.
+
+## Architecture
+
+### Entry Point
+
+`cmd/picoclaw/main.go` - Single large file (~1200 lines) containing all CLI commands: `onboard`, `agent`, `gateway`, `status`, `cron`, `skills`, `version`.
+
+### Core Packages (pkg/)
+
+- **agent/** - Multi-agent system. `loop.go` orchestrates message processing via `AgentRegistry`. `instance.go` defines `AgentInstance` (per-agent provider, sessions, tools, context builder) with factory `newAgentInstance()`. `registry.go` provides `AgentRegistry` for agent lookup by ID with a default fallback. `context.go` builds system prompts from workspace files and injects relevance-filtered memory context per message. Agent dispatch: `msg.Metadata["agent_id"]` routes to a specific agent; unset routes to default.
+
+- **memory/** - SQLite + FTS5 memory system (pure Go, no CGO via `modernc.org/sqlite`). `db.go` manages schema/lifecycle, `store.go` CRUD, `search.go` full-text search with BM25, `retention.go` category-based cleanup, `migrate.go` one-time markdown migration, `snapshot.go` export/import. Database at `workspace/memory/memory.db`. Categories: core (permanent), daily (30d), conversation (7d), custom (90d).
+
+- **providers/** - LLM provider abstraction. `HTTPProvider` implements a generic OpenAI-compatible API client. Provider is selected by model name/prefix pattern matching (e.g., `anthropic/claude-opus-4-5` routes to Anthropic, model names containing "gpt" route to OpenAI). Supported: OpenRouter, Anthropic, OpenAI, Gemini, Zhipu, Groq, Nvidia, VLLM. Falls back to OpenRouter if no pattern matches. `CreateProviderForModel(model, cfg)` creates a provider for a specific model; `CreateProvider(cfg)` delegates to it using `agents.defaults.model`.
+
+- **tools/** - Tool implementations following the `Tool` interface (`Name()`, `Description()`, `Parameters()`, `Execute()`). Registered via `ToolRegistry`. Key tools: `filesystem.go` (read/write/list), `shell.go` (command execution with safety deny-list), `web.go` (web search + fetch), `edit.go` (file editing), `cron.go` (scheduling), `message.go` (channel messaging), `spawn.go`/`subagent.go` (sub-agent spawning).
+
+- **channels/** - Multi-channel messaging. Each channel embeds `BaseChannel` and implements `Start()`, `Stop()`, `Send()`. `manager.go` coordinates all channels. Supported: Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp, MaixCAM.
+
+- **bus/** - Central message bus for async inbound/outbound message routing between channels and the agent.
+
+- **config/** - JSON config from `~/.picoclaw/config.json`. All values overridable via env vars (pattern: `PICOCLAW_SECTION_KEY`).
+
+- **session/** - File-based session persistence (JSON in `workspace/sessions/`). Sessions keyed as `channel:chatID`. Also stores `MessageLog` (searchable message history with 30-day retention) used by the `message_history` tool. `MessageLogEntry` includes `sender_name` for human-readable display. Filenames use `SanitizeSessionKey()` (`:` replaced with `_`) for Windows compatibility.
+
+- **skills/** - Markdown-based skill system. Skills are SKILL.md files auto-discovered from `workspace/skills/`. Can be installed from GitHub repos.
+
+- **cron/** - Scheduled job service with both interval ("every N seconds") and cron expression support. Jobs stored in `workspace/cron/jobs.json`.
+
+- **voice/** - Voice transcription via Groq Whisper API, attached to Telegram/Discord channels.
+
+### Key Patterns
+
+- **Tool registration**: New tools implement the `Tool` interface. Workspace-scoped tools (filesystem, exec, edit) are per-agent in `instance.go`. Shared tools (web, memory, message, cost) are created once in `loop.go` `buildSharedTools()` and registered on all agents. External tools (e.g. cron) use `agentLoop.RegisterTool()` which registers on the default agent.
+- **ContextualTool**: Tools needing channel/chatID implement `SetContext(channel, chatID)`. Context is updated per-message in `updateToolContexts()` in `loop.go`.
+- **Shared utilities**: `tools/bm25.go` provides `tokenize()` and `bm25Rank()` for BM25-ranked text search. Used by `message_history` tool. The `memory_search` tool now uses SQLite FTS5 instead.
+- **Channel registration**: New channels embed `BaseChannel`, implement the channel interface, and are registered in `channels/manager.go`.
+- **Telegram HTML conversion**: `telegram.go` `markdownToTelegramHTML()` converts markdown to Telegram HTML via sequential regex replacements. Order matters: bold/italic must be processed before links to prevent crossed HTML tags. Italic regex excludes `<>` to avoid wrapping around tags from earlier steps. The `Send()` method has a fallback that retries as plain text on HTML parse errors.
+- **Provider routing**: Models with explicit provider prefixes (e.g., `anthropic/...`) route to that provider; otherwise the fallback chain is used.
+- **Shell safety**: `tools/shell.go` enforces `restrictToWorkspace: true` by default, confining `exec` to the workspace directory. The `guardCommand()` function applies: (1) regex deny-list for destructive commands and sensitive file patterns (config files, SSH keys, private keys, password databases), (2) `~`/`$HOME`/`${HOME}` expansion before path checking to prevent bypass, (3) `working_dir` parameter validation. All tool security boundaries (exec, read_file, write_file, list_dir, edit_file) must remain consistent - the workspace directory is the sandbox.
+- **Message data flow**: Channel populates `bus.InboundMessage` with `Metadata` (username, first_name, user_id, etc.) -> `agent/loop.go` extracts metadata and calls `sessions.AddToLog()` -> persisted in `session.MessageLogEntry`. When adding fields to message history, update all three: the struct, `AddToLog()` signature, and the call sites in `loop.go`.
+- **Workspace files**: Agent context is assembled from markdown files in `~/.picoclaw/workspace/` (AGENTS.md, SOUL.md, IDENTITY.md, USER.md, TOOLS.md). Memory is now served from SQLite via relevance-filtered context injection in `context.go`.
+
+## Configuration
+
+Config file: `~/.picoclaw/config.json` (see `config.example.json` for template). `LoadConfig()` silently returns defaults if the file is missing. `CreateProvider()` then fails with "no API key configured" - check the config file path first when debugging provider errors.
+
+**NewAgentLoop signature**: `NewAgentLoop(cfg, msgBus) (*AgentLoop, error)` -- provider creation is internal. Entry points (`agentCmd`, `gatewayCmd` in `main.go`) no longer call `CreateProvider` directly.
+
+Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit).
+
+Adding a config field: (1) add to struct in `pkg/config/config.go` with json + env tags, (2) update `config.example.json`, (3) update `DefaultConfig()` if non-zero default needed, (4) use in consuming code.
+
+**Web search priority** (in `loop.go`): Ollama Search (if `tools.web.ollama.api_key` set) > Brave Search (if `tools.web.search.api_key` set) > DuckDuckGo (free, no key required, always available as fallback). All three implement the same `web_search` tool name. `web_fetch` is always registered (Ollama fetch when using Ollama, standard fetch otherwise).
+
+**Known issue**: `ProviderConfig` env tags use `{{.Name}}` template syntax that `caarlos0/env` doesn't expand. Per-provider env var overrides don't work; only JSON config values are effective for provider API keys.
+
+## Memory System
+
+Memory is SQLite-backed (`pkg/memory/`). Three tools: `memory_store`, `memory_search`, `memory_forget`. Shared single SQLite DB across all agents (memory is about the user, not per-agent). Initialized in `agent/loop.go` `NewAgentLoop()` with graceful degradation if DB fails to open. On first run, `MigrateFromMarkdown()` imports existing MEMORY.md and daily notes. `RunRetention()` cleans expired entries on startup. `context.go` `buildRelevantMemoryContext()` injects core memories + FTS5-matched results into each system prompt. `Shutdown()` optionally exports a snapshot.
+
+Adding a memory feature: modify `pkg/memory/` for storage logic, `pkg/tools/memory_*.go` for tool interface, `pkg/agent/context.go` for prompt injection.
+
+**Auto-save flow**: When `memory.auto_save=true`, each user message is stored in `loop.go` (step 3.5) with key `conv_{channel}_{chatID}_{millisTimestamp}` and category `conversation` (7-day retention). Only user messages are saved, not assistant responses. `memory_search` with empty query falls back to `List()` to support browsing.
+
+## Go Version
+
+Go 1.26.0 (see go.mod).
