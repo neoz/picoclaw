@@ -81,6 +81,8 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		braveAPIKey := cfg.Tools.Web.Search.APIKey
 		if braveAPIKey != "" {
 			toolsRegistry.Register(tools.NewWebSearchTool(braveAPIKey, cfg.Tools.Web.Search.MaxResults))
+		} else {
+			toolsRegistry.Register(tools.NewDuckDuckGoSearchTool(5))
 		}
 		toolsRegistry.Register(tools.NewWebFetchTool(50000))
 	}
