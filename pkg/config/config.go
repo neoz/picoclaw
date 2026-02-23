@@ -342,14 +342,21 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Decrypt any encrypted fields before env overrides
+	// Check for encrypted and unencrypted sensitive fields
 	hasEncrypted := false
+	hasPlaintext := false
 	for _, fp := range sensitiveFields(cfg) {
+		if *fp == "" {
+			continue
+		}
 		if secrets.IsEncrypted(*fp) {
 			hasEncrypted = true
-			break
+		} else {
+			hasPlaintext = true
 		}
 	}
+
+	// Decrypt any encrypted fields before env overrides
 	if hasEncrypted {
 		keyPath := filepath.Join(filepath.Dir(path), ".secret_key")
 		store, err := secrets.NewSecretStore(keyPath)
@@ -362,6 +369,13 @@ func LoadConfig(path string) (*Config, error) {
 				return nil, fmt.Errorf("config: decrypt field: %w", err)
 			}
 			*fp = decrypted
+		}
+	}
+
+	// Auto-encrypt: if encrypt is enabled and any sensitive field was plaintext, save back encrypted
+	if cfg.Secrets.Encrypt && hasPlaintext {
+		if err := SaveConfig(path, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to auto-encrypt config secrets: %v\n", err)
 		}
 	}
 
