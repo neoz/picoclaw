@@ -37,7 +37,7 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run wi
 
 - **providers/** - LLM provider abstraction. `HTTPProvider` implements a generic OpenAI-compatible API client. Provider is selected by model name/prefix pattern matching (e.g., `anthropic/claude-opus-4-5` routes to Anthropic, model names containing "gpt" route to OpenAI). Supported: OpenRouter, Anthropic, OpenAI, Gemini, Zhipu, Groq, Nvidia, VLLM. Falls back to OpenRouter if no pattern matches. `CreateProviderForModel(model, cfg)` creates a provider for a specific model; `CreateProvider(cfg)` delegates to it using `agents.defaults.model`.
 
-- **tools/** - Tool implementations following the `Tool` interface (`Name()`, `Description()`, `Parameters()`, `Execute()`). Registered via `ToolRegistry`. Key tools: `filesystem.go` (read/write/list), `shell.go` (command execution with safety deny-list), `web.go` (web search + fetch), `edit.go` (file editing), `cron.go` (scheduling), `message.go` (channel messaging), `spawn.go`/`subagent.go` (sub-agent spawning).
+- **tools/** - Tool implementations following the `Tool` interface (`Name()`, `Description()`, `Parameters()`, `Execute()`). Registered via `ToolRegistry`. Key tools: `filesystem.go` (read/write/list), `shell.go` (command execution with safety deny-list), `web.go` (web search + fetch), `edit.go` (file editing), `cron.go` (scheduling), `message.go` (channel messaging), `spawn.go`/`subagent.go` (sub-agent spawning), `delegate.go` (orchestrator delegation to specialist agents).
 
 - **channels/** - Multi-channel messaging. Each channel embeds `BaseChannel` and implements `Start()`, `Stop()`, `Send()`. `manager.go` coordinates all channels. Supported: Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp, MaixCAM.
 
@@ -55,8 +55,9 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run wi
 
 ### Key Patterns
 
-- **Tool registration**: New tools implement the `Tool` interface. Workspace-scoped tools (filesystem, exec, edit) are per-agent in `instance.go`. Shared tools (web, memory, message, cost) are created once in `loop.go` `buildSharedTools()` and registered on all agents. External tools (e.g. cron) use `agentLoop.RegisterTool()` which registers on the default agent.
+- **Tool registration**: New tools implement the `Tool` interface. Workspace-scoped tools (filesystem, exec, edit) are per-agent in `instance.go`. Shared tools (web, memory, message, cost) are created once in `loop.go` `buildSharedTools()` and registered on all agents. External tools (e.g. cron) use `agentLoop.RegisterTool()` which registers on the default agent. Config-conditional tools (e.g. `delegate`) are registered by `initDelegateTools()` at end of `NewAgentLoop()`, only on agents with `subagents.allow_agents` set.
 - **ContextualTool**: Tools needing channel/chatID implement `SetContext(channel, chatID)`. Context is updated per-message in `updateToolContexts()` in `loop.go`.
+- **DelegateRunner pattern**: Tools needing agent loop access (e.g. `delegate.go`) define an interface in `tools/base.go` (`DelegateRunner`), implemented by `AgentLoop` in `loop.go`. This avoids circular imports between `pkg/tools` and `pkg/agent`.
 - **Shared utilities**: `tools/bm25.go` provides `tokenize()` and `bm25Rank()` for BM25-ranked text search. Used by `message_history` tool. The `memory_search` tool now uses SQLite FTS5 instead.
 - **Channel registration**: New channels embed `BaseChannel`, implement the channel interface, and are registered in `channels/manager.go`.
 - **Telegram HTML conversion**: `telegram.go` `markdownToTelegramHTML()` converts markdown to Telegram HTML via sequential regex replacements. Order matters: bold/italic must be processed before links to prevent crossed HTML tags. Italic regex excludes `<>` to avoid wrapping around tags from earlier steps. The `Send()` method has a fallback that retries as plain text on HTML parse errors.
@@ -86,6 +87,10 @@ Memory is SQLite-backed (`pkg/memory/`). Three tools: `memory_store`, `memory_se
 Adding a memory feature: modify `pkg/memory/` for storage logic, `pkg/tools/memory_*.go` for tool interface, `pkg/agent/context.go` for prompt injection.
 
 **Auto-save flow**: When `memory.auto_save=true`, each user message is stored in `loop.go` (step 3.5) with key `conv_{channel}_{chatID}_{millisTimestamp}` and category `conversation` (7-day retention). Only user messages are saved, not assistant responses. `memory_search` with empty query falls back to `List()` to support browsing.
+
+## Agent Orchestrator
+
+The `delegate` tool enables an orchestrator pattern: a default agent routes tasks to specialist agents. `DelegateTool` (in `pkg/tools/delegate.go`) uses the `DelegateRunner` interface (in `base.go`) implemented by `AgentLoop`. Sync mode calls `runAgentLoop()` on the target agent's `AgentInstance` with a `delegate:{agentID}:{chatID}:{timestamp}` session key. Async mode runs in a goroutine and publishes results back via bus as system messages (same pattern as `spawn`/`subagent.go`). Access control: only agents listed in `subagents.allow_agents` can be delegated to. The `delegate` tool is only registered on agents that have this config set. `updateToolContexts()` in `loop.go` must be updated when adding new `ContextualTool` implementations.
 
 ## Go Version
 
