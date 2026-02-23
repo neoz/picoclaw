@@ -82,6 +82,8 @@ Adding a config field: (1) add to struct in `pkg/config/config.go` with json + e
 
 **Config encryption**: `secrets.encrypt` toggle (default `false`). Decryption is always active on load (prefix-driven). Encryption only on `SaveConfig` when enabled. `SaveConfig` JSON-clones the config before encrypting to avoid mutating the caller. Key auto-generated on first encrypt. Test with `go test ./pkg/secrets/`.
 
+**Docker secrets**: `.secret_key` is bind-mounted from host alongside `config.json` in `run.sh`/`docker-compose.yml`. `run.sh` uses `touch` to create the file if missing (Docker would create a directory otherwise). `entrypoint.sh` must `chown` all bind-mounted files to `picoclaw` user. `NewSecretStore` treats empty key files as missing and generates a new key. When adding new bind-mounted files: (1) add mount in `run.sh` + `docker-compose.yml`, (2) `touch` in `run.sh` before `docker run`, (3) `chown` in `entrypoint.sh`.
+
 **Web search priority** (in `loop.go`): Ollama Search (if `tools.web.ollama.api_key` set) > Brave Search (if `tools.web.search.api_key` set) > DuckDuckGo (free, no key required, always available as fallback). All three implement the same `web_search` tool name. `web_fetch` is always registered (Ollama fetch when using Ollama, standard fetch otherwise).
 
 **Known issue**: `ProviderConfig` env tags use `{{.Name}}` template syntax that `caarlos0/env` doesn't expand. Per-provider env var overrides don't work; only JSON config values are effective for provider API keys.
