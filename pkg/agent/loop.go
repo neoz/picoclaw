@@ -121,7 +121,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error
 		}
 	}
 
-	return &AgentLoop{
+	al := &AgentLoop{
 		bus:         msgBus,
 		cfg:         cfg,
 		registry:    registry,
@@ -129,7 +129,9 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error
 		memoryDB:    memDB,
 		memoryCfg:   &cfg.Memory,
 		costTracker: costTracker,
-	}, nil
+	}
+	al.initDelegateTools()
+	return al, nil
 }
 
 // buildSharedTools creates tool instances that are shared across all agents.
@@ -632,6 +634,91 @@ func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID str
 			st.SetContext(channel, chatID)
 		}
 	}
+	if tool, ok := inst.Tools.Get("delegate"); ok {
+		if dt, ok := tool.(*tools.DelegateTool); ok {
+			dt.SetContext(channel, chatID)
+		}
+	}
+}
+
+// initDelegateTools creates and registers a DelegateTool on each agent that has
+// subagents.allow_agents configured.
+func (al *AgentLoop) initDelegateTools() {
+	for _, inst := range al.registry.List() {
+		if inst.Subagents == nil || len(inst.Subagents.AllowAgents) == 0 {
+			continue
+		}
+		dt := tools.NewDelegateTool(al, inst.Subagents.AllowAgents)
+		inst.Tools.Register(dt)
+		logger.InfoCF("agent", fmt.Sprintf("Registered delegate tool on agent %q (targets: %v)", inst.ID, inst.Subagents.AllowAgents), nil)
+	}
+}
+
+// RunDelegate invokes a target agent's full LLM+tool loop synchronously.
+func (al *AgentLoop) RunDelegate(ctx context.Context, agentID, task, channel, chatID string) (string, error) {
+	inst, ok := al.registry.Get(agentID)
+	if !ok {
+		return "", fmt.Errorf("agent %q not found", agentID)
+	}
+
+	sessionKey := fmt.Sprintf("delegate:%s:%s:%d", agentID, chatID, time.Now().UnixMilli())
+
+	return al.runAgentLoop(ctx, inst, processOptions{
+		SessionKey:      sessionKey,
+		Channel:         channel,
+		ChatID:          chatID,
+		UserMessage:     task,
+		DefaultResponse: "Delegated task completed with no output.",
+		EnableSummary:   false,
+		SendResponse:    false,
+	})
+}
+
+// RunDelegateAsync invokes a target agent in the background and publishes the
+// result back via the message bus as a system message (same pattern as spawn).
+func (al *AgentLoop) RunDelegateAsync(ctx context.Context, agentID, task, label, channel, chatID string) (string, error) {
+	inst, ok := al.registry.Get(agentID)
+	if !ok {
+		return "", fmt.Errorf("agent %q not found", agentID)
+	}
+
+	go func() {
+		sessionKey := fmt.Sprintf("delegate:%s:%s:%d", agentID, chatID, time.Now().UnixMilli())
+
+		result, err := al.runAgentLoop(context.Background(), inst, processOptions{
+			SessionKey:      sessionKey,
+			Channel:         channel,
+			ChatID:          chatID,
+			UserMessage:     task,
+			DefaultResponse: "Delegated task completed with no output.",
+			EnableSummary:   false,
+			SendResponse:    false,
+		})
+
+		content := result
+		if err != nil {
+			content = fmt.Sprintf("Delegate to %s failed: %v", agentID, err)
+		}
+
+		al.bus.PublishInbound(bus.InboundMessage{
+			Channel:  "system",
+			SenderID: fmt.Sprintf("delegate:%s", agentID),
+			ChatID:   fmt.Sprintf("%s:%s", channel, chatID),
+			Content:  fmt.Sprintf("Task '%s' completed.\n\nResult:\n%s", label, content),
+		})
+	}()
+
+	return fmt.Sprintf("Delegated task to agent %q (async). Result will be reported when done.", agentID), nil
+}
+
+// ListAgents returns metadata for all registered agents.
+func (al *AgentLoop) ListAgents() []tools.AgentInfo {
+	agents := al.registry.List()
+	infos := make([]tools.AgentInfo, 0, len(agents))
+	for _, a := range agents {
+		infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name})
+	}
+	return infos
 }
 
 // maybeSummarize triggers summarization if the session history exceeds thresholds.
