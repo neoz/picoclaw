@@ -8,7 +8,7 @@ services:
     ports:
       - "18790:18790"
     volumes:
-      - ./config.json:/home/picoclaw/.picoclaw/config.json:ro
+      - ./config.json:/home/picoclaw/.picoclaw/config.json
       - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
     environment:
       - TZ=Asia/Ho_Chi_Minh
