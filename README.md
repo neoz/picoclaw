@@ -49,6 +49,8 @@
 
 🌍 **True Portability**: Single self-contained binary across RISC-V, ARM, and x86, One-click to Go!
 
+🧠 **Multi-Agent Orchestrator**: Define specialist agents (planner, coder, QA, security) with their own models and tools — the default agent delegates tasks via the `delegate` tool.
+
 🤖 **AI-Bootstrapped**: Autonomous Go-native implementation — 95% Agent-generated core with human-in-the-loop refinement.
 
 |  | OpenClaw  | NanoBot | **PicoClaw** |
@@ -481,6 +483,72 @@ PicoClaw supports scheduled reminders and recurring tasks through the `cron` too
 - **Cron expressions**: "Remind me at 9am daily" → uses cron expression
 
 Jobs are stored in `~/.picoclaw/workspace/cron/` and processed automatically.
+
+### Multi-Agent Orchestrator
+
+PicoClaw supports a multi-agent orchestrator pattern where a default agent routes tasks to specialist agents. Each specialist runs with its own LLM model, tools, and workspace.
+
+The default agent uses the `delegate` tool to invoke specialists synchronously (wait for result) or asynchronously (fire and forget, result sent back later). Access control is enforced via `subagents.allow_agents`.
+
+<details>
+<summary><b>Orchestrator config example</b></summary>
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "~/.picoclaw/workspace",
+      "model": "glm-4.7",
+      "max_tokens": 8192,
+      "temperature": 0.7,
+      "max_tool_iterations": 20
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "Orchestrator",
+        "default": true,
+        "subagents": {
+          "allow_agents": ["planner", "coder", "qa", "security"]
+        }
+      },
+      {
+        "id": "planner",
+        "name": "Planner",
+        "model": "openai/gpt-4.1",
+        "temperature": 0.5,
+        "max_tool_iterations": 5
+      },
+      {
+        "id": "coder",
+        "name": "Code Assistant",
+        "model": "anthropic/claude-sonnet-4",
+        "max_tokens": 16384,
+        "temperature": 0.3,
+        "max_tool_iterations": 30
+      },
+      {
+        "id": "qa",
+        "name": "QA Tester",
+        "model": "anthropic/claude-sonnet-4",
+        "temperature": 0.2,
+        "max_tool_iterations": 20
+      },
+      {
+        "id": "security",
+        "name": "Security Reviewer",
+        "model": "anthropic/claude-sonnet-4",
+        "temperature": 0.1,
+        "max_tool_iterations": 15
+      }
+    ]
+  }
+}
+```
+
+The orchestrator agent receives user messages and decides which specialist to delegate to. For example, "review this code for vulnerabilities" would be delegated to the `security` agent, which runs with its own model and full tool loop.
+
+</details>
 
 ## 🤝 Contribute & Roadmap
 
