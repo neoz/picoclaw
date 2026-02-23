@@ -45,6 +45,8 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run wi
 
 - **config/** - JSON config from `~/.picoclaw/config.json`. All values overridable via env vars (pattern: `PICOCLAW_SECTION_KEY`).
 
+- **secrets/** - ChaCha20-Poly1305 AEAD encryption for sensitive config values. `SecretStore` in `secrets.go` manages key loading/generation and encrypt/decrypt. Key file: `~/.picoclaw/.secret_key` (32 random bytes, hex-encoded, 0600 perms). Encrypted format: `enc:<hex(nonce||ciphertext||tag)>`. Values without `enc:` prefix pass through as plaintext.
+
 - **session/** - File-based session persistence (JSON in `workspace/sessions/`). Sessions keyed as `channel:chatID`. Also stores `MessageLog` (searchable message history with 30-day retention) used by the `message_history` tool. `MessageLogEntry` includes `sender_name` for human-readable display. Filenames use `SanitizeSessionKey()` (`:` replaced with `_`) for Windows compatibility.
 
 - **skills/** - Markdown-based skill system. Skills are SKILL.md files auto-discovered from `workspace/skills/`. Can be installed from GitHub repos.
@@ -72,9 +74,13 @@ Config file: `~/.picoclaw/config.json` (see `config.example.json` for template).
 
 **NewAgentLoop signature**: `NewAgentLoop(cfg, msgBus) (*AgentLoop, error)` -- provider creation is internal. Entry points (`agentCmd`, `gatewayCmd` in `main.go`) no longer call `CreateProvider` directly.
 
-Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit).
+Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit), `secrets` (encrypt toggle for config field encryption).
 
 Adding a config field: (1) add to struct in `pkg/config/config.go` with json + env tags, (2) update `config.example.json`, (3) update `DefaultConfig()` if non-zero default needed, (4) use in consuming code.
+
+**Adding a sensitive config field**: Also add its pointer to `sensitiveFields()` in `config.go`. This registers it for automatic encrypt-on-save and decrypt-on-load. Currently 17 fields: 8 provider API keys, 5 Feishu/Telegram/Discord tokens, 2 QQ/DingTalk secrets, 2 web tool API keys.
+
+**Config encryption**: `secrets.encrypt` toggle (default `false`). Decryption is always active on load (prefix-driven). Encryption only on `SaveConfig` when enabled. `SaveConfig` JSON-clones the config before encrypting to avoid mutating the caller. Key auto-generated on first encrypt. Test with `go test ./pkg/secrets/`.
 
 **Web search priority** (in `loop.go`): Ollama Search (if `tools.web.ollama.api_key` set) > Brave Search (if `tools.web.search.api_key` set) > DuckDuckGo (free, no key required, always available as fallback). All three implement the same `web_search` tool name. `web_fetch` is always registered (Ollama fetch when using Ollama, standard fetch otherwise).
 

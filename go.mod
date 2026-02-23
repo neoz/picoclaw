@@ -12,6 +12,7 @@ require (
 	github.com/mymmrac/telego v1.6.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/tencent-connect/botgo v0.2.1
+	golang.org/x/crypto v0.48.0
 	golang.org/x/oauth2 v0.35.0
 	modernc.org/sqlite v1.46.1
 )
@@ -40,7 +41,6 @@ require (
 	github.com/valyala/fasthttp v1.69.0 // indirect
 	github.com/valyala/fastjson v1.6.7 // indirect
 	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect

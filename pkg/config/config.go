@@ -8,7 +8,12 @@ import (
 	"sync"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/sipeed/picoclaw/pkg/secrets"
 )
+
+type SecretsConfig struct {
+	Encrypt bool `json:"encrypt" env:"PICOCLAW_SECRETS_ENCRYPT"`
+}
 
 type Config struct {
 	Agents    AgentsConfig    `json:"agents"`
@@ -19,6 +24,7 @@ type Config struct {
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Memory    MemoryConfig    `json:"memory"`
 	Cost      CostConfig      `json:"cost"`
+	Secrets   SecretsConfig   `json:"secrets"`
 	mu        sync.RWMutex
 }
 
@@ -291,6 +297,32 @@ func DefaultConfig() *Config {
 			WarnAtPercent:   80,
 			Prices:          map[string]ModelPriceConfig{},
 		},
+		Secrets: SecretsConfig{
+			Encrypt: false,
+		},
+	}
+}
+
+// sensitiveFields returns pointers to all sensitive string fields in the config.
+func sensitiveFields(cfg *Config) []*string {
+	return []*string{
+		&cfg.Providers.Anthropic.APIKey,
+		&cfg.Providers.OpenAI.APIKey,
+		&cfg.Providers.OpenRouter.APIKey,
+		&cfg.Providers.Groq.APIKey,
+		&cfg.Providers.Zhipu.APIKey,
+		&cfg.Providers.VLLM.APIKey,
+		&cfg.Providers.Gemini.APIKey,
+		&cfg.Providers.Nvidia.APIKey,
+		&cfg.Channels.Telegram.Token,
+		&cfg.Channels.Discord.Token,
+		&cfg.Channels.Feishu.AppSecret,
+		&cfg.Channels.Feishu.EncryptKey,
+		&cfg.Channels.Feishu.VerificationToken,
+		&cfg.Channels.QQ.AppSecret,
+		&cfg.Channels.DingTalk.ClientSecret,
+		&cfg.Tools.Web.Search.APIKey,
+		&cfg.Tools.Web.Ollama.APIKey,
 	}
 }
 
@@ -310,6 +342,29 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Decrypt any encrypted fields before env overrides
+	hasEncrypted := false
+	for _, fp := range sensitiveFields(cfg) {
+		if secrets.IsEncrypted(*fp) {
+			hasEncrypted = true
+			break
+		}
+	}
+	if hasEncrypted {
+		keyPath := filepath.Join(filepath.Dir(path), ".secret_key")
+		store, err := secrets.NewSecretStore(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("config: init secret store: %w", err)
+		}
+		for _, fp := range sensitiveFields(cfg) {
+			decrypted, err := store.Decrypt(*fp)
+			if err != nil {
+				return nil, fmt.Errorf("config: decrypt field: %w", err)
+			}
+			*fp = decrypted
+		}
+	}
+
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
@@ -321,7 +376,38 @@ func SaveConfig(path string, cfg *Config) error {
 	cfg.mu.RLock()
 	defer cfg.mu.RUnlock()
 
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	toSave := cfg
+	perm := os.FileMode(0644)
+
+	if cfg.Secrets.Encrypt {
+		// Clone via JSON to avoid mutating caller's config
+		cloneData, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		var clone Config
+		if err := json.Unmarshal(cloneData, &clone); err != nil {
+			return err
+		}
+
+		keyPath := filepath.Join(filepath.Dir(path), ".secret_key")
+		store, err := secrets.NewSecretStore(keyPath)
+		if err != nil {
+			return fmt.Errorf("config: init secret store: %w", err)
+		}
+
+		for _, fp := range sensitiveFields(&clone) {
+			encrypted, err := store.Encrypt(*fp)
+			if err != nil {
+				return fmt.Errorf("config: encrypt field: %w", err)
+			}
+			*fp = encrypted
+		}
+		toSave = &clone
+		perm = 0600
+	}
+
+	data, err := json.MarshalIndent(toSave, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -331,7 +417,7 @@ func SaveConfig(path string, cfg *Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, perm)
 }
 
 func (c *Config) WorkspacePath() string {

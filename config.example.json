@@ -172,5 +172,8 @@
     "monthly_limit_usd": 0,
     "warn_at_percent": 80,
     "prices": {}
+  },
+  "secrets": {
+    "encrypt": false
   }
 }
