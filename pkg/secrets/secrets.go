@@ -29,14 +29,14 @@ func NewSecretStore(keyPath string) (*SecretStore, error) {
 	}
 
 	data, err := os.ReadFile(keyPath)
-	if err == nil {
+	if err == nil && len(strings.TrimSpace(string(data))) > 0 {
 		return loadKey(strings.TrimSpace(string(data)))
 	}
-	if !os.IsNotExist(err) {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("secrets: read key file: %w", err)
 	}
 
-	// Generate new key
+	// Generate new key (file missing or empty)
 	var key [32]byte
 	if _, err := rand.Read(key[:]); err != nil {
 		return nil, fmt.Errorf("secrets: generate key: %w", err)
