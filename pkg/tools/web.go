@@ -560,6 +560,141 @@ func (t *OllamaFetchTool) Execute(ctx context.Context, args map[string]interface
 	return string(resultJSON), nil
 }
 
+// DuckDuckGoSearchTool scrapes DuckDuckGo's HTML search endpoint.
+// No API key required - works as a free fallback search provider.
+type DuckDuckGoSearchTool struct {
+	maxResults int
+}
+
+func NewDuckDuckGoSearchTool(maxResults int) *DuckDuckGoSearchTool {
+	if maxResults <= 0 || maxResults > 10 {
+		maxResults = 5
+	}
+	return &DuckDuckGoSearchTool{maxResults: maxResults}
+}
+
+func (t *DuckDuckGoSearchTool) Name() string {
+	return "web_search"
+}
+
+func (t *DuckDuckGoSearchTool) Description() string {
+	return "Search the web for current information. Returns titles, URLs, and snippets from search results."
+}
+
+func (t *DuckDuckGoSearchTool) Parameters() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Search query",
+			},
+			"count": map[string]interface{}{
+				"type":        "integer",
+				"description": "Number of results (1-10)",
+				"minimum":     1.0,
+				"maximum":     10.0,
+			},
+		},
+		"required": []string{"query"},
+	}
+}
+
+func (t *DuckDuckGoSearchTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
+	query, ok := args["query"].(string)
+	if !ok {
+		return "", fmt.Errorf("query is required")
+	}
+
+	count := t.maxResults
+	if c, ok := args["count"].(float64); ok {
+		if int(c) > 0 && int(c) <= 10 {
+			count = int(c)
+		}
+	}
+
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(query))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	html := string(body)
+
+	// Extract result blocks: links from class="result__a" and snippets from class="result__snippet"
+	linkRe := regexp.MustCompile(`class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>`)
+	snippetRe := regexp.MustCompile(`class="result__snippet"[^>]*>(.*?)</`)
+
+	linkMatches := linkRe.FindAllStringSubmatch(html, -1)
+	snippetMatches := snippetRe.FindAllStringSubmatch(html, -1)
+
+	if len(linkMatches) == 0 {
+		return fmt.Sprintf("No results for: %s", query), nil
+	}
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Results for: %s", query))
+	for i, match := range linkMatches {
+		if i >= count {
+			break
+		}
+		rawURL := match[1]
+		title := stripHTMLTags(match[2])
+		realURL := decodeDDGRedirectURL(rawURL)
+
+		lines = append(lines, fmt.Sprintf("%d. %s\n   %s", i+1, title, realURL))
+		if i < len(snippetMatches) {
+			snippet := stripHTMLTags(snippetMatches[i][1])
+			if snippet != "" {
+				lines = append(lines, fmt.Sprintf("   %s", snippet))
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n"), nil
+}
+
+// decodeDDGRedirectURL extracts the actual URL from DuckDuckGo's redirect wrapper.
+func decodeDDGRedirectURL(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	if uddg := parsed.Query().Get("uddg"); uddg != "" {
+		return uddg
+	}
+	return rawURL
+}
+
+// stripHTMLTags removes HTML tags and decodes common HTML entities.
+func stripHTMLTags(s string) string {
+	re := regexp.MustCompile(`<[^>]*>`)
+	s = re.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#x27;", "'")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	return strings.TrimSpace(s)
+}
+
 func (t *WebFetchTool) extractText(htmlContent string) string {
 	re := regexp.MustCompile(`<script[\s\S]*?</script>`)
 	result := re.ReplaceAllLiteralString(htmlContent, "")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -101,10 +100,12 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]interface{})
 	return fmt.Sprintf("Successfully edited %s", path), nil
 }
 
-type AppendFileTool struct{}
+type AppendFileTool struct {
+	allowedDir string
+}
 
-func NewAppendFileTool() *AppendFileTool {
-	return &AppendFileTool{}
+func NewAppendFileTool(allowedDir string) *AppendFileTool {
+	return &AppendFileTool{allowedDir: allowedDir}
 }
 
 func (t *AppendFileTool) Name() string {
@@ -143,9 +144,12 @@ func (t *AppendFileTool) Execute(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("content is required")
 	}
 
-	filePath := filepath.Clean(path)
+	resolvedPath, err := checkAllowedDir(path, t.allowedDir)
+	if err != nil {
+		return "", err
+	}
 
-	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(resolvedPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}

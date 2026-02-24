@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
@@ -17,8 +19,9 @@ import (
 type ContextBuilder struct {
 	workspace    string
 	skillsLoader *skills.SkillsLoader
-	memory       *MemoryStore
-	tools        *tools.ToolRegistry // Direct reference to tool registry
+	tools        *tools.ToolRegistry
+	memoryDB     *memory.MemoryDB
+	memoryCfg    *config.MemoryConfig
 }
 
 func getGlobalConfigDir() string {
@@ -39,13 +42,18 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	return &ContextBuilder{
 		workspace:    workspace,
 		skillsLoader: skills.NewSkillsLoader(workspace, globalSkillsDir, builtinSkillsDir),
-		memory:       NewMemoryStore(workspace),
 	}
 }
 
 // SetToolsRegistry sets the tools registry for dynamic tool summary generation.
 func (cb *ContextBuilder) SetToolsRegistry(registry *tools.ToolRegistry) {
 	cb.tools = registry
+}
+
+// SetMemoryDB sets the memory database and config for relevance-filtered context.
+func (cb *ContextBuilder) SetMemoryDB(db *memory.MemoryDB, cfg *config.MemoryConfig) {
+	cb.memoryDB = db
+	cb.memoryCfg = cfg
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -56,7 +64,7 @@ func (cb *ContextBuilder) getIdentity() string {
 	// Build tools section dynamically
 	toolsSection := cb.buildToolsSection()
 
-	return fmt.Sprintf(`# picoclaw 🦞
+	return fmt.Sprintf(`# picoclaw
 
 You are picoclaw, a helpful AI assistant.
 
@@ -68,8 +76,6 @@ You are picoclaw, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
 - Skills: %s/skills/{skill-name}/SKILL.md
 
 %s
@@ -80,8 +86,8 @@ Your workspace is at: %s
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When remembering something, write to %s/memory/MEMORY.md`,
-		now, runtime, workspacePath, workspacePath, workspacePath, workspacePath, toolsSection, workspacePath)
+3. **Memory** - When interacting with me if something seems memorable or important, use the memory_store tool to save it. When I ask you about past information, use memory_search to find it. If you need to update or delete something, use memory_forget.`,
+		now, runtime, workspacePath, workspacePath, toolsSection)
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
@@ -128,11 +134,7 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 %s`, skillsSummary))
 	}
 
-	// Memory context
-	memoryContext := cb.memory.GetMemoryContext()
-	if memoryContext != "" {
-		parts = append(parts, "# Memory\n\n"+memoryContext)
-	}
+	// Memory context is now injected per-message via buildRelevantMemoryContext()
 
 	// Join with "---" separator
 	return strings.Join(parts, "\n\n---\n\n")
@@ -157,10 +159,81 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	return result
 }
 
+// buildRelevantMemoryContext returns memory context relevant to the user message.
+func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string {
+	if cb.memoryDB == nil {
+		return ""
+	}
+
+	topK := 10
+	minRelevance := 0.1
+	if cb.memoryCfg != nil {
+		if cb.memoryCfg.ContextTopK > 0 {
+			topK = cb.memoryCfg.ContextTopK
+		}
+		if cb.memoryCfg.MinRelevance > 0 {
+			minRelevance = cb.memoryCfg.MinRelevance
+		}
+	}
+
+	// Collect recent core memories
+	coreEntries, _ := cb.memoryDB.List("core", 20)
+	seenKeys := make(map[string]bool)
+
+	var parts []string
+
+	if len(coreEntries) > 0 {
+		var sb strings.Builder
+		sb.WriteString("## Core Memories\n\n")
+		for _, e := range coreEntries {
+			seenKeys[e.Key] = true
+			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+		}
+		parts = append(parts, sb.String())
+	}
+
+	// FTS5 search for relevant memories
+	if userMessage != "" {
+		results, err := cb.memoryDB.Search(userMessage, topK)
+		if err == nil && len(results) > 0 {
+			var sb strings.Builder
+			sb.WriteString("## Relevant Memories\n\n")
+			added := 0
+			for _, r := range results {
+				// FTS5 rank is negative (lower = more relevant), filter by absolute value
+				if r.Rank < -minRelevance || r.Rank == 0 {
+					// Skip if already in core list
+					if seenKeys[r.Entry.Key] {
+						continue
+					}
+					seenKeys[r.Entry.Key] = true
+					sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", r.Entry.Key, r.Entry.Category, r.Entry.Content))
+					added++
+				}
+			}
+			if added > 0 {
+				parts = append(parts, sb.String())
+			}
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "# Memory\n\n" + strings.Join(parts, "\n")
+}
+
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {
 	messages := []providers.Message{}
 
 	systemPrompt := cb.BuildSystemPrompt()
+
+	// Append relevance-filtered memory context
+	memoryContext := cb.buildRelevantMemoryContext(currentMessage)
+	if memoryContext != "" {
+		systemPrompt += "\n\n---\n\n" + memoryContext
+	}
 
 	// Add Current Session info if provided
 	if channel != "" && chatID != "" {
@@ -194,7 +267,10 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 		Content: systemPrompt,
 	})
 
-	messages = append(messages, history...)
+	// Sanitize history to remove orphaned tool messages that would cause
+	// "tool_call_id is not found" API errors (e.g. after TruncateHistory
+	// slices in the middle of a tool call sequence).
+	messages = append(messages, sanitizeHistory(history)...)
 
 	messages = append(messages, providers.Message{
 		Role:    "user",
@@ -202,6 +278,72 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 	})
 
 	return messages
+}
+
+// sanitizeHistory removes orphaned tool-related messages from session history.
+// It ensures every "tool" result message has a preceding "assistant" message
+// with a matching tool call ID, and every "assistant" message with tool calls
+// has all its tool results following it.
+func sanitizeHistory(history []providers.Message) []providers.Message {
+	if len(history) == 0 {
+		return history
+	}
+
+	// Pass 1: collect valid tool_call_ids from assistant messages
+	validIDs := make(map[string]bool)
+	for _, msg := range history {
+		if msg.Role == "assistant" {
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					validIDs[tc.ID] = true
+				}
+			}
+		}
+	}
+
+	// Pass 2: filter out orphaned tool result messages
+	result := make([]providers.Message, 0, len(history))
+	for _, msg := range history {
+		if msg.Role == "tool" {
+			if msg.ToolCallID == "" || !validIDs[msg.ToolCallID] {
+				continue
+			}
+		}
+		result = append(result, msg)
+	}
+
+	// Pass 3: collect remaining tool result IDs
+	answeredIDs := make(map[string]bool)
+	for _, msg := range result {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			answeredIDs[msg.ToolCallID] = true
+		}
+	}
+
+	// Pass 4: remove assistant messages whose tool calls have no matching results
+	final := make([]providers.Message, 0, len(result))
+	for _, msg := range result {
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			allAnswered := true
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && !answeredIDs[tc.ID] {
+					allAnswered = false
+					break
+				}
+			}
+			if !allAnswered {
+				// Keep as plain assistant message without tool calls
+				final = append(final, providers.Message{
+					Role:    "assistant",
+					Content: msg.Content,
+				})
+				continue
+			}
+		}
+		final = append(final, msg)
+	}
+
+	return final
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {

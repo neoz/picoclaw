@@ -26,13 +26,15 @@ const maxRetries = 3
 type HTTPProvider struct {
 	apiKey     string
 	apiBase    string
+	userAgent  string
 	httpClient *http.Client
 }
 
-func NewHTTPProvider(apiKey, apiBase string) *HTTPProvider {
+func NewHTTPProvider(apiKey, apiBase, userAgent string) *HTTPProvider {
 	return &HTTPProvider{
-		apiKey:  apiKey,
-		apiBase: apiBase,
+		apiKey:    apiKey,
+		apiBase:   apiBase,
+		userAgent: userAgent,
 		httpClient: &http.Client{
 			Timeout: 0,
 		},
@@ -79,8 +81,10 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 
 	req.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
-		authHeader := "Bearer " + p.apiKey
-		req.Header.Set("Authorization", authHeader)
+		req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	}
+	if p.userAgent != "" {
+		req.Header.Set("User-Agent", p.userAgent)
 	}
 
 	var body []byte
@@ -93,6 +97,9 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 			req.Header.Set("Content-Type", "application/json")
 			if p.apiKey != "" {
 				req.Header.Set("Authorization", "Bearer "+p.apiKey)
+			}
+			if p.userAgent != "" {
+				req.Header.Set("User-Agent", p.userAgent)
 			}
 		}
 
@@ -132,8 +139,9 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 	var apiResponse struct {
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content"`
+				ToolCalls        []struct {
 					ID       string `json:"id"`
 					Type     string `json:"type"`
 					Function *struct {
@@ -190,22 +198,52 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 		})
 	}
 
+	content := stripThinkTags(choice.Message.Content)
+	if content == "" && choice.Message.ReasoningContent != "" {
+		content = stripThinkTags(choice.Message.ReasoningContent)
+	}
+
 	return &LLMResponse{
-		Content:      choice.Message.Content,
-		ToolCalls:    toolCalls,
-		FinishReason: choice.FinishReason,
-		Usage:        apiResponse.Usage,
+		Content:          content,
+		ReasoningContent: choice.Message.ReasoningContent,
+		ToolCalls:        toolCalls,
+		FinishReason:     choice.FinishReason,
+		Usage:            apiResponse.Usage,
 	}, nil
+}
+
+// stripThinkTags removes <think>...</think> blocks from model output.
+// Some reasoning models (e.g. MiniMax) embed their chain-of-thought inline
+// in the content field rather than a separate reasoning_content field.
+func stripThinkTags(s string) string {
+	const openTag = "<think>"
+	const closeTag = "</think>"
+
+	result := strings.Builder{}
+	rest := s
+	for {
+		start := strings.Index(rest, openTag)
+		if start == -1 {
+			result.WriteString(rest)
+			break
+		}
+		result.WriteString(rest[:start])
+		end := strings.Index(rest[start:], closeTag)
+		if end == -1 {
+			// Unclosed tag: drop the rest to avoid leaking partial reasoning.
+			break
+		}
+		rest = rest[start+end+len(closeTag):]
+	}
+	return strings.TrimSpace(result.String())
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {
 	return ""
 }
 
-func CreateProvider(cfg *config.Config) (LLMProvider, error) {
-	model := cfg.Agents.Defaults.Model
-
-	var apiKey, apiBase string
+func CreateProviderForModel(model string, cfg *config.Config) (LLMProvider, error) {
+	var apiKey, apiBase, userAgent string
 
 	lowerModel := strings.ToLower(model)
 
@@ -213,12 +251,14 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case strings.HasPrefix(model, "nvidia/"):
 		apiKey = cfg.Providers.Nvidia.APIKey
 		apiBase = cfg.Providers.Nvidia.APIBase
+		userAgent = cfg.Providers.Nvidia.UserAgent
 		if apiBase == "" {
 			apiBase = "https://integrate.api.nvidia.com/v1"
 		}
 
 	case strings.HasPrefix(model, "openrouter/") || strings.HasPrefix(model, "anthropic/") || strings.HasPrefix(model, "openai/") || strings.HasPrefix(model, "meta-llama/") || strings.HasPrefix(model, "deepseek/") || strings.HasPrefix(model, "google/"):
 		apiKey = cfg.Providers.OpenRouter.APIKey
+		userAgent = cfg.Providers.OpenRouter.UserAgent
 		if cfg.Providers.OpenRouter.APIBase != "" {
 			apiBase = cfg.Providers.OpenRouter.APIBase
 		} else {
@@ -228,6 +268,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case (strings.Contains(lowerModel, "claude") || strings.HasPrefix(model, "anthropic/")) && cfg.Providers.Anthropic.APIKey != "":
 		apiKey = cfg.Providers.Anthropic.APIKey
 		apiBase = cfg.Providers.Anthropic.APIBase
+		userAgent = cfg.Providers.Anthropic.UserAgent
 		if apiBase == "" {
 			apiBase = "https://api.anthropic.com/v1"
 		}
@@ -235,6 +276,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case (strings.Contains(lowerModel, "gpt") || strings.HasPrefix(model, "openai/")) && cfg.Providers.OpenAI.APIKey != "":
 		apiKey = cfg.Providers.OpenAI.APIKey
 		apiBase = cfg.Providers.OpenAI.APIBase
+		userAgent = cfg.Providers.OpenAI.UserAgent
 		if apiBase == "" {
 			apiBase = "https://api.openai.com/v1"
 		}
@@ -242,6 +284,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case (strings.Contains(lowerModel, "gemini") || strings.HasPrefix(model, "google/")) && cfg.Providers.Gemini.APIKey != "":
 		apiKey = cfg.Providers.Gemini.APIKey
 		apiBase = cfg.Providers.Gemini.APIBase
+		userAgent = cfg.Providers.Gemini.UserAgent
 		if apiBase == "" {
 			apiBase = "https://generativelanguage.googleapis.com/v1beta"
 		}
@@ -249,6 +292,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case (strings.Contains(lowerModel, "glm") || strings.Contains(lowerModel, "zhipu") || strings.Contains(lowerModel, "zai")) && cfg.Providers.Zhipu.APIKey != "":
 		apiKey = cfg.Providers.Zhipu.APIKey
 		apiBase = cfg.Providers.Zhipu.APIBase
+		userAgent = cfg.Providers.Zhipu.UserAgent
 		if apiBase == "" {
 			apiBase = "https://open.bigmodel.cn/api/paas/v4"
 		}
@@ -256,6 +300,7 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case (strings.Contains(lowerModel, "groq") || strings.HasPrefix(model, "groq/")) && cfg.Providers.Groq.APIKey != "":
 		apiKey = cfg.Providers.Groq.APIKey
 		apiBase = cfg.Providers.Groq.APIBase
+		userAgent = cfg.Providers.Groq.UserAgent
 		if apiBase == "" {
 			apiBase = "https://api.groq.com/openai/v1"
 		}
@@ -263,10 +308,12 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	case cfg.Providers.VLLM.APIBase != "":
 		apiKey = cfg.Providers.VLLM.APIKey
 		apiBase = cfg.Providers.VLLM.APIBase
+		userAgent = cfg.Providers.VLLM.UserAgent
 
 	default:
 		if cfg.Providers.OpenRouter.APIKey != "" {
 			apiKey = cfg.Providers.OpenRouter.APIKey
+			userAgent = cfg.Providers.OpenRouter.UserAgent
 			if cfg.Providers.OpenRouter.APIBase != "" {
 				apiBase = cfg.Providers.OpenRouter.APIBase
 			} else {
@@ -285,7 +332,11 @@ func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("no API base configured for provider (model: %s)", model)
 	}
 
-	return NewHTTPProvider(apiKey, apiBase), nil
+	return NewHTTPProvider(apiKey, apiBase, userAgent), nil
+}
+
+func CreateProvider(cfg *config.Config) (LLMProvider, error) {
+	return CreateProviderForModel(cfg.Agents.Defaults.Model, cfg)
 }
 
 // parseRetryDelay extracts retry delay from Retry-After header or response body.

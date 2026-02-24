@@ -7,6 +7,7 @@ VOLUME_NAME="picoclaw-workspace"
 PORT="18790"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
+SECRET_KEY_FILE="$SCRIPT_DIR/.secret_key"
 ACTION="run"
 BUILD=false
 CLEAN=false
@@ -58,13 +59,17 @@ if ! docker volume ls --format '{{.Name}}' | grep -q "^${VOLUME_NAME}$"; then
     docker volume create "$VOLUME_NAME"
 fi
 
+# Ensure secret key file exists (prevents Docker from creating it as a directory)
+touch "$SECRET_KEY_FILE"
+
 # Run the container
 echo "Starting container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
     -p "$PORT:$PORT" \
-    -v "$CONFIG_FILE:/home/picoclaw/.picoclaw/config.json:ro" \
+    -v "$CONFIG_FILE:/home/picoclaw/.picoclaw/config.json" \
+    -v "$SECRET_KEY_FILE:/home/picoclaw/.picoclaw/.secret_key" \
     -v "$VOLUME_NAME:/home/picoclaw/.picoclaw/workspace" \
     -e TZ=Asia/Ho_Chi_Minh \
     "$IMAGE_NAME"

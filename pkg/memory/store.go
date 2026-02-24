@@ -1,0 +1,106 @@
+package memory
+
+import (
+	"fmt"
+	"time"
+)
+
+// Store inserts or updates a memory entry (upsert on key).
+func (m *MemoryDB) Store(key, content, category string) error {
+	category = validateCategory(category)
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	_, err := m.db.Exec(`
+		INSERT INTO memories (key, content, category, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			content = excluded.content,
+			category = excluded.category,
+			updated_at = excluded.updated_at
+	`, key, content, category, now, now)
+	if err != nil {
+		return fmt.Errorf("store memory: %w", err)
+	}
+	return nil
+}
+
+// Get retrieves a memory entry by key. Returns nil if not found.
+func (m *MemoryDB) Get(key string) *MemoryEntry {
+	row := m.db.QueryRow(`
+		SELECT id, key, content, category, created_at, updated_at
+		FROM memories WHERE key = ?
+	`, key)
+
+	var entry MemoryEntry
+	var createdAt, updatedAt string
+	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt)
+	if err != nil {
+		return nil
+	}
+	entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	return &entry
+}
+
+// Delete removes a memory entry by key. Returns true if deleted.
+func (m *MemoryDB) Delete(key string) bool {
+	result, err := m.db.Exec("DELETE FROM memories WHERE key = ?", key)
+	if err != nil {
+		return false
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0
+}
+
+// List returns memory entries filtered by category, ordered by updated_at DESC.
+// Pass empty category to list all.
+func (m *MemoryDB) List(category string, limit int) ([]MemoryEntry, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	var query string
+	var args []interface{}
+	if category != "" {
+		query = `SELECT id, key, content, category, created_at, updated_at
+			FROM memories WHERE category = ? ORDER BY updated_at DESC LIMIT ?`
+		args = []interface{}{category, limit}
+	} else {
+		query = `SELECT id, key, content, category, created_at, updated_at
+			FROM memories ORDER BY updated_at DESC LIMIT ?`
+		args = []interface{}{limit}
+	}
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []MemoryEntry
+	for rows.Next() {
+		var entry MemoryEntry
+		var createdAt, updatedAt string
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// Count returns the total number of memory entries.
+func (m *MemoryDB) Count() int {
+	var count int
+	m.db.QueryRow("SELECT COUNT(*) FROM memories").Scan(&count)
+	return count
+}
+
+// CountByCategory returns the number of entries in a given category.
+func (m *MemoryDB) CountByCategory(category string) int {
+	var count int
+	m.db.QueryRow("SELECT COUNT(*) FROM memories WHERE category = ?", category).Scan(&count)
+	return count
+}

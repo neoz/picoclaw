@@ -11,12 +11,13 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-const messageLogRetentionDays = 7
+const messageLogRetentionDays = 30
 
 type MessageLogEntry struct {
-	Content   string    `json:"content"`
-	SenderID  string    `json:"sender_id"`
-	Timestamp time.Time `json:"timestamp"`
+	Content    string    `json:"content"`
+	SenderID   string    `json:"sender_id"`
+	SenderName string    `json:"sender_name,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 type Session struct {
@@ -185,7 +186,7 @@ func (sm *SessionManager) persistSession(session *Session) error {
 }
 
 // AddToLog appends a message to the session's MessageLog and persists.
-func (sm *SessionManager) AddToLog(key, content, senderID string) {
+func (sm *SessionManager) AddToLog(key, content, senderID, senderName string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -199,9 +200,10 @@ func (sm *SessionManager) AddToLog(key, content, senderID string) {
 	}
 
 	session.MessageLog = append(session.MessageLog, MessageLogEntry{
-		Content:   content,
-		SenderID:  senderID,
-		Timestamp: time.Now(),
+		Content:    content,
+		SenderID:   senderID,
+		SenderName: senderName,
+		Timestamp:  time.Now(),
 	})
 	session.Updated = time.Now()
 	sm.persistSession(session)

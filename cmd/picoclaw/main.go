@@ -22,10 +22,10 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/cost"
 	"github.com/sipeed/picoclaw/pkg/cron"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/skills"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/voice"
@@ -33,6 +33,8 @@ import (
 
 const version = "0.1.0"
 const logo = "🦞"
+
+var customConfigPath string
 
 func copyDirectory(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -69,6 +71,19 @@ func copyDirectory(src, dst string) error {
 }
 
 func main() {
+	// Parse global --config / -c flag before subcommand
+	var filteredArgs []string
+	for i := 1; i < len(os.Args); i++ {
+		if (os.Args[i] == "--config" || os.Args[i] == "-c") && i+1 < len(os.Args) {
+			customConfigPath = os.Args[i+1]
+			i++
+		} else {
+			filteredArgs = append(filteredArgs, os.Args[i])
+		}
+	}
+	// Rebuild os.Args with global flags removed
+	os.Args = append([]string{os.Args[0]}, filteredArgs...)
+
 	if len(os.Args) < 2 {
 		printHelp()
 		os.Exit(1)
@@ -147,7 +162,10 @@ func main() {
 
 func printHelp() {
 	fmt.Printf("%s picoclaw - Personal AI Assistant v%s\n\n", logo, version)
-	fmt.Println("Usage: picoclaw <command>")
+	fmt.Println("Usage: picoclaw [--config <path>] <command>")
+	fmt.Println()
+	fmt.Println("Global flags:")
+	fmt.Println("  -c, --config <path>  Path to config file (default: ~/.picoclaw/config.json)")
 	fmt.Println()
 	fmt.Println("Commands:")
 	fmt.Println("  onboard     Initialize picoclaw configuration and workspace")
@@ -317,38 +335,12 @@ Discussions: https://github.com/sipeed/picoclaw/discussions
 
 	memoryDir := filepath.Join(workspace, "memory")
 	os.MkdirAll(memoryDir, 0755)
-	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
-	if _, err := os.Stat(memoryFile); os.IsNotExist(err) {
-		memoryContent := `# Long-term Memory
+	fmt.Println("  Created memory/ (SQLite database will be initialized on first run)")
 
-This file stores important information that should persist across sessions.
-
-## User Information
-
-(Important facts about user)
-
-## Preferences
-
-(User preferences learned over time)
-
-## Important Notes
-
-(Things to remember)
-
-## Configuration
-
-- Model preferences
-- Channel settings
-- Skills enabled
-`
-		os.WriteFile(memoryFile, []byte(memoryContent), 0644)
-		fmt.Println("  Created memory/MEMORY.md")
-
-		skillsDir := filepath.Join(workspace, "skills")
-		if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
-			os.MkdirAll(skillsDir, 0755)
-			fmt.Println("  Created skills/")
-		}
+	skillsDir := filepath.Join(workspace, "skills")
+	if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
+		os.MkdirAll(skillsDir, 0755)
+		fmt.Println("  Created skills/")
 	}
 
 	for filename, content := range templates {
@@ -389,14 +381,12 @@ func agentCmd() {
 		os.Exit(1)
 	}
 
-	provider, err := providers.CreateProvider(cfg)
+	msgBus := bus.NewMessageBus()
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
 	if err != nil {
-		fmt.Printf("Error creating provider: %v\n", err)
+		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)
 	}
-
-	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
 	// Print agent startup info (only for interactive mode)
 	startupInfo := agentLoop.GetStartupInfo()
@@ -524,14 +514,12 @@ func gatewayCmd() {
 		os.Exit(1)
 	}
 
-	provider, err := providers.CreateProvider(cfg)
+	msgBus := bus.NewMessageBus()
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
 	if err != nil {
-		fmt.Printf("Error creating provider: %v\n", err)
+		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)
 	}
-
-	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
 	// Print agent startup info
 	fmt.Println("\n📦 Agent Status:")
@@ -646,6 +634,7 @@ func gatewayCmd() {
 	heartbeatService.Stop()
 	cronService.Stop()
 	agentLoop.Stop()
+	agentLoop.Shutdown()
 	channelManager.StopAll(ctx)
 	fmt.Println("✓ Gateway stopped")
 }
@@ -703,9 +692,46 @@ func statusCmd() {
 			fmt.Println("vLLM/Local: not set")
 		}
 	}
+
+	// Cost tracking status
+	if cfg.Cost.Enabled {
+		fmt.Println("\nCost Tracking: enabled")
+		ct, err := cost.NewCostTracker(&cfg.Cost, workspace)
+		if err != nil {
+			fmt.Printf("  Error: %v\n", err)
+		} else if ct != nil {
+			summary := ct.GetSummary()
+			now := time.Now().UTC()
+			dailyCost := ct.GetDailyCost(now)
+			monthlyCost := ct.GetMonthlyCost(now.Year(), now.Month())
+			fmt.Printf("  Today:   $%.4f", dailyCost)
+			if cfg.Cost.DailyLimitUSD > 0 {
+				fmt.Printf(" / $%.2f limit", cfg.Cost.DailyLimitUSD)
+			}
+			fmt.Println()
+			fmt.Printf("  Month:   $%.4f", monthlyCost)
+			if cfg.Cost.MonthlyLimitUSD > 0 {
+				fmt.Printf(" / $%.2f limit", cfg.Cost.MonthlyLimitUSD)
+			}
+			fmt.Println()
+			fmt.Printf("  Session: $%.4f (%d requests)\n", summary.SessionCostUSD, summary.RequestCount)
+			if len(summary.ByModel) > 0 {
+				fmt.Println("  Models:")
+				for _, ms := range summary.ByModel {
+					fmt.Printf("    %s: $%.4f (%d reqs, %d tokens)\n",
+						ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens)
+				}
+			}
+		}
+	} else {
+		fmt.Println("\nCost Tracking: disabled")
+	}
 }
 
 func getConfigPath() string {
+	if customConfigPath != "" {
+		return customConfigPath
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".picoclaw", "config.json")
 }

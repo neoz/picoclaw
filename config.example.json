@@ -6,13 +6,58 @@
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
-    }
+    },
+    "list": [
+      {
+        "id": "main",
+        "name": "Orchestrator",
+        "default": true,
+        "subagents": {
+          "allow_agents": ["planner", "coder", "qa", "security"]
+        }
+      },
+      {
+        "id": "planner",
+        "name": "Planner",
+        "model": "openai/gpt-4.1",
+        "temperature": 0.5,
+        "max_tool_iterations": 5,
+        "skills": ["planning"]
+      },
+      {
+        "id": "coder",
+        "name": "Code Assistant",
+        "model": "anthropic/claude-sonnet-4",
+        "workspace": "~/.picoclaw/workspace/coder",
+        "max_tokens": 16384,
+        "temperature": 0.3,
+        "max_tool_iterations": 30,
+        "skills": ["coding"]
+      },
+      {
+        "id": "qa",
+        "name": "QA Tester",
+        "model": "anthropic/claude-sonnet-4",
+        "temperature": 0.2,
+        "max_tool_iterations": 20,
+        "skills": ["testing"]
+      },
+      {
+        "id": "security",
+        "name": "Security Reviewer",
+        "model": "anthropic/claude-sonnet-4",
+        "temperature": 0.1,
+        "max_tool_iterations": 15,
+        "skills": ["security"]
+      }
+    ]
   },
   "channels": {
     "telegram": {
       "enabled": false,
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "allow_from": ["YOUR_USER_ID"]
+      "allow_from": ["YOUR_USER_ID"],
+      "allow_temp": false
     },
     "discord": {
       "enabled": false,
@@ -48,38 +93,47 @@
   "providers": {
     "anthropic": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "openai": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "groq": {
       "api_key": "gsk_xxx",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "zhipu": {
       "api_key": "YOUR_ZHIPU_API_KEY",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "gemini": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "vllm": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     },
     "nvidia": {
       "api_key": "",
-      "api_base": ""
+      "api_base": "",
+      "user_agent": ""
     }
   },
   "tools": {
+    "restrict_to_workspace": true,
     "web": {
       "search": {
         "api_key": "YOUR_BRAVE_API_KEY",
@@ -99,5 +153,47 @@
     "enabled": false,
     "interval_seconds": 1800,
     "channel": "telegram"
+  },
+  "memory": {
+    "retention_days": {
+      "daily": 30,
+      "conversation": 7,
+      "custom": 90
+    },
+    "search_limit": 20,
+    "min_relevance": 0.1,
+    "context_top_k": 10,
+    "auto_save": false,
+    "snapshot_on_exit": false
+  },
+  "cost": {
+    "enabled": false,
+    "daily_limit_usd": 0,
+    "monthly_limit_usd": 0,
+    "warn_at_percent": 80,
+    "prices": {        
+        "qwen3.5:397b-cloud": {
+          "input": 0.6,
+          "output": 3.6
+        },
+        "kimi-coding/k2p5": {
+          "input": 0.6,
+          "output": 3
+        }
+      }
+  },
+  "secrets": {
+    "encrypt": false
+  },
+  "security": {
+    "prompt_guard": {
+      "enabled": false,
+      "action": "warn",
+      "sensitivity": 0.5
+    },
+    "leak_detector": {
+      "enabled": false,
+      "sensitivity": 0.7
+    }
   }
 }
