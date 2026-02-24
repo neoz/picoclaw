@@ -176,12 +176,11 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 		}
 	}
 
-	// Collect recent core memories
-	coreEntries, _ := cb.memoryDB.List("core", 20)
 	seenKeys := make(map[string]bool)
-
 	var parts []string
 
+	// 1. Core memories (permanent, always included)
+	coreEntries, _ := cb.memoryDB.List("core", 20)
 	if len(coreEntries) > 0 {
 		var sb strings.Builder
 		sb.WriteString("## Core Memories\n\n")
@@ -192,7 +191,38 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 		parts = append(parts, sb.String())
 	}
 
-	// FTS5 search for relevant memories
+	// 2. Daily notes (recent, always included for temporal awareness)
+	dailyEntries, _ := cb.memoryDB.List("daily", 10)
+	if len(dailyEntries) > 0 {
+		var sb strings.Builder
+		sb.WriteString("## Daily Notes\n\n")
+		for _, e := range dailyEntries {
+			seenKeys[e.Key] = true
+			sb.WriteString(fmt.Sprintf("- [%s]: %s\n", e.Key, e.Content))
+		}
+		parts = append(parts, sb.String())
+	}
+
+	// 3. Recent memories (daily+custom from last 3 days, ensures temporal context)
+	recentEntries, _ := cb.memoryDB.ListRecent([]string{"daily", "custom"}, 3, 5)
+	if len(recentEntries) > 0 {
+		var sb strings.Builder
+		sb.WriteString("## Recent Memories\n\n")
+		added := 0
+		for _, e := range recentEntries {
+			if seenKeys[e.Key] {
+				continue
+			}
+			seenKeys[e.Key] = true
+			sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", e.Key, e.Category, e.Content))
+			added++
+		}
+		if added > 0 {
+			parts = append(parts, sb.String())
+		}
+	}
+
+	// 4. FTS5 search for relevant memories (exclude conversation noise)
 	if userMessage != "" {
 		results, err := cb.memoryDB.Search(userMessage, topK)
 		if err == nil && len(results) > 0 {
@@ -202,8 +232,11 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 			for _, r := range results {
 				// FTS5 rank is negative (lower = more relevant), filter by absolute value
 				if r.Rank < -minRelevance || r.Rank == 0 {
-					// Skip if already in core list
 					if seenKeys[r.Entry.Key] {
+						continue
+					}
+					// Skip conversation category (raw auto-saved messages are noisy)
+					if r.Entry.Category == "conversation" {
 						continue
 					}
 					seenKeys[r.Entry.Key] = true

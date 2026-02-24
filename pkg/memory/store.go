@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -74,6 +75,52 @@ func (m *MemoryDB) List(category string, limit int) ([]MemoryEntry, error) {
 	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []MemoryEntry
+	for rows.Next() {
+		var entry MemoryEntry
+		var createdAt, updatedAt string
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
+// ListRecent returns entries from the given categories updated within the last N days.
+func (m *MemoryDB) ListRecent(categories []string, days, limit int) ([]MemoryEntry, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(categories) == 0 {
+		return nil, nil
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(categories))
+	args := make([]interface{}, 0, len(categories)+2)
+	for i, c := range categories {
+		placeholders[i] = "?"
+		args = append(args, c)
+	}
+	args = append(args, cutoff, limit)
+
+	query := fmt.Sprintf(`SELECT id, key, content, category, created_at, updated_at
+		FROM memories
+		WHERE category IN (%s) AND updated_at >= ?
+		ORDER BY updated_at DESC LIMIT ?`,
+		strings.Join(placeholders, ","))
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list recent memories: %w", err)
 	}
 	defer rows.Close()
 
