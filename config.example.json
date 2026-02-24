@@ -175,5 +175,16 @@
   },
   "secrets": {
     "encrypt": false
+  },
+  "security": {
+    "prompt_guard": {
+      "enabled": false,
+      "action": "warn",
+      "sensitivity": 0.5
+    },
+    "leak_detector": {
+      "enabled": false,
+      "sensitivity": 0.7
+    }
   }
 }

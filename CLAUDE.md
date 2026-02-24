@@ -21,7 +21,7 @@ make clean              # Remove build artifacts
 make run ARGS="agent"   # Build and run with arguments
 ```
 
-Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/channels/`.
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/`.
 
 ## Architecture
 
@@ -53,6 +53,8 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run wi
 
 - **cron/** - Scheduled job service with both interval ("every N seconds") and cron expression support. Jobs stored in `workspace/cron/jobs.json`.
 
+- **security/** - Input/output security scanning. `promptguard.go` detects prompt injection (system override, role confusion, tool call injection, secret extraction, command injection subtypes, jailbreak) via regex scoring with configurable sensitivity/action. `leakdetector.go` detects and redacts credentials (API keys, AWS, private keys, JWTs, database URLs, generic secrets) in outbound content. Both initialized in `loop.go` `NewAgentLoop()` when `cfg.Security` is enabled. Tests: `go test ./pkg/security/`.
+
 - **voice/** - Voice transcription via Groq Whisper API, attached to Telegram/Discord channels.
 
 ### Key Patterns
@@ -67,6 +69,7 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`. Run wi
 - **Shell safety**: `tools/shell.go` enforces `restrictToWorkspace: true` by default, confining `exec` to the workspace directory. The `guardCommand()` function applies: (1) regex deny-list for destructive commands and sensitive file patterns (config files, SSH keys, private keys, password databases), (2) `~`/`$HOME`/`${HOME}` expansion before path checking to prevent bypass, (3) `working_dir` parameter validation. All tool security boundaries (exec, read_file, write_file, list_dir, edit_file) must remain consistent - the workspace directory is the sandbox.
 - **Message data flow**: Channel populates `bus.InboundMessage` with `Metadata` (username, first_name, user_id, etc.) -> `agent/loop.go` extracts metadata and calls `sessions.AddToLog()` -> persisted in `session.MessageLogEntry`. When adding fields to message history, update all three: the struct, `AddToLog()` signature, and the call sites in `loop.go`. In group chats, `processMessage()` prepends `[senderName]: ` to the user message so the LLM can distinguish users. Group detection uses `isGroupMessage()` (checks `is_group`, `is_dm`, `group_id`, `conversation_type`, `chat_type` across channels). Sessions are keyed by chatID, not userID, so all users in a group share one session.
 - **Channel metadata keys**: Telegram: `username`, `first_name`, `user_id`, `is_group`. Discord: `username`, `display_name`, `user_id`, `guild_id`, `is_dm`. DingTalk: `sender_name`, `conversation_type` ("2"=group). QQ: `group_id` (present for group msgs). Feishu: `chat_type` ("group"). When adding group-aware features, update `isGroupMessage()` and `getSenderDisplayName()` in `loop.go`.
+- **Security scanning** (`loop.go`): PromptGuard scans at two points: (1) user input in `processMessage()` (warn or block), (2) tool results in `runLLMIteration()` (warn only). LeakDetector scans outbound content in `runAgentLoop()` step 5.5 (auto-redacts before session save and bus publish). Adding a new scan category: add to `defaultGuardCategories()` or `defaultLeakCategories()`, update `maxGuardScore` if adding guard categories, and add tests.
 - **Workspace files**: Agent context is assembled from markdown files in `~/.picoclaw/workspace/` (AGENTS.md, SOUL.md, IDENTITY.md, USER.md, TOOLS.md). Memory is now served from SQLite via relevance-filtered context injection in `context.go`.
 
 ## Configuration
@@ -75,9 +78,9 @@ Config file: `~/.picoclaw/config.json` (see `config.example.json` for template).
 
 **NewAgentLoop signature**: `NewAgentLoop(cfg, msgBus) (*AgentLoop, error)` -- provider creation is internal. Entry points (`agentCmd`, `gatewayCmd` in `main.go`) no longer call `CreateProvider` directly.
 
-Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit), `secrets` (encrypt toggle for config field encryption).
+Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit), `secrets` (encrypt toggle for config field encryption), `security` (prompt_guard: enabled/action/sensitivity, leak_detector: enabled/sensitivity).
 
-Adding a config field: (1) add to struct in `pkg/config/config.go` with json + env tags, (2) update `config.example.json`, (3) update `DefaultConfig()` if non-zero default needed, (4) use in consuming code.
+Adding a config field: (1) add to struct in `pkg/config/config.go` with json + env tags, (2) update `config.example.json`, (3) update `DefaultConfig()` if non-zero default needed, (4) use in consuming code. `DefaultConfig()` flows through to `onboard` via `SaveConfig`, so no separate onboard change is needed.
 
 **Adding a sensitive config field**: Also add its pointer to `sensitiveFields()` in `config.go`. This registers it for automatic encrypt-on-save and decrypt-on-load. Currently 17 fields: 8 provider API keys, 5 Feishu/Telegram/Discord tokens, 2 QQ/DingTalk secrets, 2 web tool API keys.
 

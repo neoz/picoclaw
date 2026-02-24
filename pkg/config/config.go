@@ -25,7 +25,24 @@ type Config struct {
 	Memory    MemoryConfig    `json:"memory"`
 	Cost      CostConfig      `json:"cost"`
 	Secrets   SecretsConfig   `json:"secrets"`
+	Security  SecurityConfig  `json:"security"`
 	mu        sync.RWMutex
+}
+
+type SecurityConfig struct {
+	PromptGuard  PromptGuardConfig  `json:"prompt_guard"`
+	LeakDetector LeakDetectorConfig `json:"leak_detector"`
+}
+
+type PromptGuardConfig struct {
+	Enabled     bool    `json:"enabled" env:"PICOCLAW_SECURITY_PROMPT_GUARD_ENABLED"`
+	Action      string  `json:"action" env:"PICOCLAW_SECURITY_PROMPT_GUARD_ACTION"`
+	Sensitivity float64 `json:"sensitivity" env:"PICOCLAW_SECURITY_PROMPT_GUARD_SENSITIVITY"`
+}
+
+type LeakDetectorConfig struct {
+	Enabled     bool    `json:"enabled" env:"PICOCLAW_SECURITY_LEAK_DETECTOR_ENABLED"`
+	Sensitivity float64 `json:"sensitivity" env:"PICOCLAW_SECURITY_LEAK_DETECTOR_SENSITIVITY"`
 }
 
 type ModelPriceConfig struct {
@@ -299,6 +316,17 @@ func DefaultConfig() *Config {
 		},
 		Secrets: SecretsConfig{
 			Encrypt: false,
+		},
+		Security: SecurityConfig{
+			PromptGuard: PromptGuardConfig{
+				Enabled:     false,
+				Action:      "warn",
+				Sensitivity: 0.5,
+			},
+			LeakDetector: LeakDetectorConfig{
+				Enabled:     false,
+				Sensitivity: 0.7,
+			},
 		},
 	}
 }

@@ -51,6 +51,8 @@
 
 🧠 **Multi-Agent Orchestrator**: Define specialist agents (planner, coder, QA, security) with their own models and tools — the default agent delegates tasks via the `delegate` tool.
 
+🛡️ **Security Scanning**: Built-in prompt injection detection (6 attack categories) and credential leak redaction (API keys, AWS, JWTs, private keys, database URLs) — configurable sensitivity and warn/block actions.
+
 🤖 **AI-Bootstrapped**: Autonomous Go-native implementation — 95% Agent-generated core with human-in-the-loop refinement.
 
 |  | OpenClaw  | NanoBot | **PicoClaw** |
@@ -549,6 +551,39 @@ The default agent uses the `delegate` tool to invoke specialists synchronously (
 The orchestrator agent receives user messages and decides which specialist to delegate to. For example, "review this code for vulnerabilities" would be delegated to the `security` agent, which runs with its own model and full tool loop.
 
 </details>
+
+### Security
+
+PicoClaw includes optional input/output security scanning to protect against prompt injection attacks and accidental credential leaks.
+
+- **Prompt Guard** scans inbound messages for injection attempts (system override, role confusion, tool call injection, secret extraction, command injection, jailbreak). Configurable action (`warn` or `block`) and sensitivity threshold.
+- **Leak Detector** scans outbound responses for credentials (API keys, AWS secrets, private keys, JWTs, database URLs) and automatically redacts them before delivery.
+
+Both are disabled by default. Enable in `~/.picoclaw/config.json`:
+
+```json
+{
+  "security": {
+    "prompt_guard": {
+      "enabled": true,
+      "action": "warn",
+      "sensitivity": 0.5
+    },
+    "leak_detector": {
+      "enabled": true,
+      "sensitivity": 0.7
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `prompt_guard.enabled` | `false` | Enable prompt injection detection |
+| `prompt_guard.action` | `"warn"` | `"warn"` logs only, `"block"` rejects the message |
+| `prompt_guard.sensitivity` | `0.5` | Detection threshold (0.0-1.0, lower = more sensitive) |
+| `leak_detector.enabled` | `false` | Enable credential leak detection |
+| `leak_detector.sensitivity` | `0.7` | Detection threshold (0.0-1.0, above 0.5 also catches generic `password=`/`token=` patterns) |
 
 ## 🤝 Contribute & Roadmap
 

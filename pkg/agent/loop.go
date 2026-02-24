@@ -23,6 +23,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/security"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
@@ -34,8 +35,10 @@ type AgentLoop struct {
 	running     atomic.Bool
 	summarizing sync.Map
 	memoryDB    *memory.MemoryDB
-	memoryCfg   *config.MemoryConfig
-	costTracker *cost.CostTracker
+	memoryCfg    *config.MemoryConfig
+	costTracker  *cost.CostTracker
+	promptGuard  *security.PromptGuard
+	leakDetector *security.LeakDetector
 }
 
 // processOptions configures how a message is processed
@@ -130,6 +133,19 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error
 		memoryCfg:   &cfg.Memory,
 		costTracker: costTracker,
 	}
+
+	// Initialize security modules
+	if cfg.Security.PromptGuard.Enabled {
+		al.promptGuard = security.NewPromptGuard(cfg.Security.PromptGuard.Action, cfg.Security.PromptGuard.Sensitivity)
+		logger.InfoCF("security", "Prompt guard enabled",
+			map[string]interface{}{"action": cfg.Security.PromptGuard.Action, "sensitivity": cfg.Security.PromptGuard.Sensitivity})
+	}
+	if cfg.Security.LeakDetector.Enabled {
+		al.leakDetector = security.NewLeakDetector(cfg.Security.LeakDetector.Sensitivity)
+		logger.InfoCF("security", "Leak detector enabled",
+			map[string]interface{}{"sensitivity": cfg.Security.LeakDetector.Sensitivity})
+	}
+
 	al.initDelegateTools()
 	return al, nil
 }
@@ -331,6 +347,24 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		}
 	}
 
+	// Prompt guard: scan user input
+	if al.promptGuard != nil {
+		guardResult := al.promptGuard.Scan(userMessage)
+		if !guardResult.Safe {
+			logger.WarnCF("security", "Prompt injection detected in user input",
+				map[string]interface{}{
+					"patterns": guardResult.Patterns,
+					"score":    guardResult.Score,
+					"action":   string(guardResult.Action),
+					"channel":  msg.Channel,
+					"chat_id":  msg.ChatID,
+				})
+			if guardResult.Action == security.ActionBlock {
+				return "Message blocked by security policy.", nil
+			}
+		}
+	}
+
 	// Process as user message
 	return al.runAgentLoop(ctx, inst, processOptions{
 		SessionKey:      msg.SessionKey,
@@ -467,6 +501,19 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 	// 5. Handle empty response
 	if finalContent == "" {
 		finalContent = opts.DefaultResponse
+	}
+
+	// 5.5. Leak detector: scan outbound content
+	if al.leakDetector != nil {
+		leakResult := al.leakDetector.Scan(finalContent)
+		if !leakResult.Clean {
+			logger.WarnCF("security", "Credential leak detected in response",
+				map[string]interface{}{
+					"patterns":    leakResult.Patterns,
+					"session_key": opts.SessionKey,
+				})
+			finalContent = leakResult.Redacted
+		}
 	}
 
 	// 6. Save final assistant message to session
@@ -655,6 +702,19 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 			result, err := inst.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID)
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
+			}
+
+			// Prompt guard: scan tool results for injection attempts
+			if al.promptGuard != nil {
+				toolGuard := al.promptGuard.Scan(result)
+				if !toolGuard.Safe {
+					logger.WarnCF("security", "Prompt injection detected in tool result",
+						map[string]interface{}{
+							"tool":     tc.Name,
+							"patterns": toolGuard.Patterns,
+							"score":    toolGuard.Score,
+						})
+				}
 			}
 
 			toolResultMsg := providers.Message{
