@@ -322,17 +322,72 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		return al.processSystemMessage(ctx, inst, msg)
 	}
 
+	// In group chats, prepend sender name so the LLM can distinguish users
+	userMessage := msg.Content
+	if isGroupMessage(msg.Metadata) {
+		name := getSenderDisplayName(msg.Metadata)
+		if name != "" {
+			userMessage = fmt.Sprintf("[%s]: %s", name, userMessage)
+		}
+	}
+
 	// Process as user message
 	return al.runAgentLoop(ctx, inst, processOptions{
 		SessionKey:      msg.SessionKey,
 		Channel:         msg.Channel,
 		ChatID:          msg.ChatID,
-		UserMessage:     msg.Content,
+		UserMessage:     userMessage,
 		DefaultResponse: "I've completed processing but have no response to give.",
 		EnableSummary:   true,
 		SendResponse:    false,
 		Metadata:        msg.Metadata,
 	})
+}
+
+// isGroupMessage checks whether the inbound message comes from a group chat
+// across all supported channels.
+func isGroupMessage(meta map[string]string) bool {
+	// Telegram: explicit is_group flag
+	if meta["is_group"] == "true" {
+		return true
+	}
+	// Discord: has guild_id means it's a server channel (not DM)
+	if meta["is_dm"] == "false" && meta["guild_id"] != "" {
+		return true
+	}
+	// QQ: group messages have group_id
+	if meta["group_id"] != "" {
+		return true
+	}
+	// DingTalk: conversation_type "2" is group
+	if meta["conversation_type"] == "2" {
+		return true
+	}
+	// Feishu: chat_type "group"
+	if meta["chat_type"] == "group" {
+		return true
+	}
+	return false
+}
+
+// getSenderDisplayName extracts the best available display name from message metadata.
+func getSenderDisplayName(meta map[string]string) string {
+	// Prefer username, then first_name (Telegram)
+	if name := meta["username"]; name != "" {
+		return name
+	}
+	if name := meta["first_name"]; name != "" {
+		return name
+	}
+	// Discord: display_name
+	if name := meta["display_name"]; name != "" {
+		return name
+	}
+	// DingTalk: sender_name
+	if name := meta["sender_name"]; name != "" {
+		return name
+	}
+	return ""
 }
 
 func (al *AgentLoop) processSystemMessage(ctx context.Context, inst *AgentInstance, msg bus.InboundMessage) (string, error) {
