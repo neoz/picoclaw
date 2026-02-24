@@ -304,6 +304,22 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		}
 	}
 
+	// Include replied-to message content so the agent has context
+	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil &&
+		message.ReplyToMessage.From.ID != c.botID {
+		replyText := message.ReplyToMessage.Text
+		if replyText == "" {
+			replyText = message.ReplyToMessage.Caption
+		}
+		if replyText != "" {
+			replyFrom := message.ReplyToMessage.From.FirstName
+			if replyFrom == "" {
+				replyFrom = message.ReplyToMessage.From.Username
+			}
+			content = fmt.Sprintf("[reply to %s: %s]\n%s", replyFrom, replyText, content)
+		}
+	}
+
 	if content == "" {
 		content = "[empty message]"
 	}
