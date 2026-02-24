@@ -69,7 +69,6 @@ type MemoryConfig struct {
 	SearchLimit    int                   `json:"search_limit" env:"PICOCLAW_MEMORY_SEARCH_LIMIT"`
 	MinRelevance   float64               `json:"min_relevance" env:"PICOCLAW_MEMORY_MIN_RELEVANCE"`
 	ContextTopK    int                   `json:"context_top_k" env:"PICOCLAW_MEMORY_CONTEXT_TOP_K"`
-	AutoSave       bool                  `json:"auto_save" env:"PICOCLAW_MEMORY_AUTO_SAVE"`
 	SnapshotOnExit bool                  `json:"snapshot_on_exit" env:"PICOCLAW_MEMORY_SNAPSHOT_ON_EXIT"`
 }
 
@@ -303,7 +302,6 @@ func DefaultConfig() *Config {
 			SearchLimit:    20,
 			MinRelevance:   0.1,
 			ContextTopK:    10,
-			AutoSave:       false,
 			SnapshotOnExit: false,
 		},
 		Cost: CostConfig{

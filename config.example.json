@@ -162,7 +162,6 @@
     "search_limit": 20,
     "min_relevance": 0.1,
     "context_top_k": 10,
-    "auto_save": false,
     "snapshot_on_exit": false
   },
   "cost": {
