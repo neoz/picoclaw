@@ -313,6 +313,27 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
 
+	// Handle /allow command in groups: allowed users can grant temp access
+	if isGroup && allowed && strings.HasPrefix(content, "/allow ") {
+		target := strings.TrimSpace(strings.TrimPrefix(content, "/allow "))
+		target = strings.TrimPrefix(target, "@")
+		if target != "" {
+			c.grantTempAllow(chatID, target)
+			replyText := fmt.Sprintf("Granted @%s temporary access for %d minutes.", target, int(tempAllowTTL.Minutes()))
+			c.sendWithRetry(func() error {
+				_, e := c.bot.SendMessage(ctx, &telego.SendMessageParams{
+					ChatID: tu.ID(chatID),
+					Text:   replyText,
+					ReplyParameters: &telego.ReplyParameters{
+						MessageID: message.MessageID,
+					},
+				})
+				return e
+			})
+		}
+		return
+	}
+
 	if !allowed && !isGroup {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
 		return
@@ -341,9 +362,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 		// Bot is mentioned or replied to - check temp allow for non-allowed users
 		if !allowed {
-			if c.config.AllowTemp && c.consumeTempAllow(chatID, user) {
+			if c.checkTempAllow(chatID, user) {
 				allowed = true
-				log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
+				log.Printf("Telegram message from %s: temp allow active", senderID)
 			} else {
 				log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
 				c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
@@ -357,12 +378,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		if content == "" {
 			content = "[empty message]"
 		}
-	}
-
-	// Grant one-time temp allow for other users mentioned in this message
-	// Only permanently allowed users can grant temp access
-	if isGroup && c.config.AllowTemp && c.IsAllowed(senderID) {
-		c.grantTempAllows(chatID, message)
 	}
 
 	// React to sender message to acknowledge receipt
@@ -493,49 +508,34 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 	return localPath
 }
 
-const tempAllowTTL = 30 * time.Minute
+const tempAllowTTL = 10 * time.Minute
 
-// grantTempAllows extracts @mentioned users from an allowed user's message
-// and grants them one-time access to interact with the bot in this chat.
-func (c *TelegramChannel) grantTempAllows(chatID int64, message *telego.Message) {
-	for _, e := range message.Entities {
-		switch e.Type {
-		case "mention":
-			name := extractEntityText(message.Text, e.Offset+1, e.Length-1)
-			if strings.EqualFold(name, c.botUsername) {
-				continue
-			}
-			key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(name))
-			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
-			log.Printf("Temp allow granted for @%s in chat %d", name, chatID)
-		case "text_mention":
-			if e.User == nil {
-				continue
-			}
-			key := fmt.Sprintf("%d:%d", chatID, e.User.ID)
-			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
-			log.Printf("Temp allow granted for user %d in chat %d", e.User.ID, chatID)
-		}
-	}
+// grantTempAllow stores a temp allow for a target username in a specific chat.
+func (c *TelegramChannel) grantTempAllow(chatID int64, username string) {
+	key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(username))
+	c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
+	log.Printf("Temp allow granted for @%s in chat %d (expires in %v)", username, chatID, tempAllowTTL)
 }
 
-// consumeTempAllow checks if a user has a one-time temp allow and consumes it.
-func (c *TelegramChannel) consumeTempAllow(chatID int64, user *telego.User) bool {
+// checkTempAllow checks if a user has an active temp allow (time-window, not one-shot).
+func (c *TelegramChannel) checkTempAllow(chatID int64, user *telego.User) bool {
 	// Try by username first
 	if user.Username != "" {
 		key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(user.Username))
-		if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+		if expiry, ok := c.tempAllows.Load(key); ok {
 			if time.Now().Before(expiry.(time.Time)) {
 				return true
 			}
+			c.tempAllows.Delete(key)
 		}
 	}
-	// Try by user ID (for text_mention grants)
+	// Try by user ID
 	key := fmt.Sprintf("%d:%d", chatID, user.ID)
-	if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+	if expiry, ok := c.tempAllows.Load(key); ok {
 		if time.Now().Before(expiry.(time.Time)) {
 			return true
 		}
+		c.tempAllows.Delete(key)
 	}
 	return false
 }

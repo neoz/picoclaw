@@ -56,8 +56,7 @@
     "telegram": {
       "enabled": false,
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "allow_from": ["YOUR_USER_ID"],
-      "allow_temp": false
+      "allow_from": ["YOUR_USER_ID"]
     },
     "discord": {
       "enabled": false,
