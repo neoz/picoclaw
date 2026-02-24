@@ -171,7 +171,16 @@
     "daily_limit_usd": 0,
     "monthly_limit_usd": 0,
     "warn_at_percent": 80,
-    "prices": {}
+    "prices": {        
+        "qwen3.5:397b-cloud": {
+          "input": 0.6,
+          "output": 3.6
+        },
+        "kimi-coding/k2p5": {
+          "input": 0.6,
+          "output": 3
+        }
+      }
   },
   "secrets": {
     "encrypt": false
