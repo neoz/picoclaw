@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // DelegateTool delegates tasks to other registered agents via the orchestrator pattern.
 type DelegateTool struct {
 	runner      DelegateRunner
 	allowAgents []string
+	mu          sync.Mutex
 	channel     string
 	chatID      string
 }
@@ -78,8 +80,10 @@ func (t *DelegateTool) Parameters() map[string]interface{} {
 }
 
 func (t *DelegateTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
 	t.channel = channel
 	t.chatID = chatID
+	t.mu.Unlock()
 }
 
 func (t *DelegateTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -108,12 +112,16 @@ func (t *DelegateTool) Execute(ctx context.Context, args map[string]interface{})
 		mode = "sync"
 	}
 
+	t.mu.Lock()
+	channel, chatID := t.channel, t.chatID
+	t.mu.Unlock()
+
 	switch mode {
 	case "sync":
-		return t.runner.RunDelegate(ctx, agentID, task, t.channel, t.chatID)
+		return t.runner.RunDelegate(ctx, agentID, task, channel, chatID)
 	case "async":
 		label := fmt.Sprintf("delegate:%s", agentID)
-		return t.runner.RunDelegateAsync(ctx, agentID, task, label, t.channel, t.chatID)
+		return t.runner.RunDelegateAsync(ctx, agentID, task, label, channel, chatID)
 	default:
 		return "", fmt.Errorf("invalid mode %q, must be sync or async", mode)
 	}

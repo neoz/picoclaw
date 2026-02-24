@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/session"
 )
@@ -12,6 +13,7 @@ import (
 // Implements ContextualTool.
 type STMTool struct {
 	sessions *session.SessionManager
+	mu       sync.Mutex
 	channel  string
 	chatID   string
 }
@@ -59,13 +61,17 @@ func (t *STMTool) Parameters() map[string]interface{} {
 }
 
 func (t *STMTool) SetContext(channel, chatID string) {
+	t.mu.Lock()
 	t.channel = channel
 	t.chatID = chatID
+	t.mu.Unlock()
 }
 
 func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	action, _ := args["action"].(string)
+	t.mu.Lock()
 	sessionKey := fmt.Sprintf("%s:%s", t.channel, t.chatID)
+	t.mu.Unlock()
 
 	days := 7
 	if d, ok := args["days"].(float64); ok && d > 0 {
