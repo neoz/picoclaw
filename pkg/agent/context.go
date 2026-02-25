@@ -408,10 +408,29 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 // sanitizeHistory removes orphaned tool-related messages from session history.
 // It ensures every "tool" result message has a preceding "assistant" message
 // with a matching tool call ID, and every "assistant" message with tool calls
-// has all its tool results following it.
+// has all its tool results following it. It also strips leading assistant/tool
+// messages that appear before the first user message (some model templates like
+// Qwen require a user message before any assistant message).
 func sanitizeHistory(history []providers.Message) []providers.Message {
 	if len(history) == 0 {
 		return history
+	}
+
+	// Pass 0: strip leading non-user messages (assistant/tool) before the first
+	// user message. Many model chat templates (e.g. Qwen) require a user query
+	// before any assistant response.
+	firstUser := -1
+	for i, msg := range history {
+		if msg.Role == "user" {
+			firstUser = i
+			break
+		}
+	}
+	if firstUser > 0 {
+		history = history[firstUser:]
+	} else if firstUser < 0 {
+		// No user messages in history at all - return empty
+		return nil
 	}
 
 	// Pass 1: collect valid tool_call_ids from assistant messages
@@ -468,7 +487,18 @@ func sanitizeHistory(history []providers.Message) []providers.Message {
 		final = append(final, msg)
 	}
 
-	return final
+	// Pass 5: merge consecutive user messages into a single message.
+	// Some model templates don't handle multiple consecutive same-role messages.
+	merged := make([]providers.Message, 0, len(final))
+	for _, msg := range final {
+		if len(merged) > 0 && msg.Role == "user" && merged[len(merged)-1].Role == "user" {
+			merged[len(merged)-1].Content += "\n" + msg.Content
+		} else {
+			merged = append(merged, msg)
+		}
+	}
+
+	return merged
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {
