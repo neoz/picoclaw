@@ -29,5 +29,11 @@ func (m *MemoryDB) RunRetention(retentionDays map[string]int) (int, error) {
 		totalDeleted += int(rows)
 	}
 
+	// Clean relations whose memory_key no longer exists, then orphaned entities
+	if totalDeleted > 0 {
+		m.CleanStaleRelations()
+		m.CleanOrphanedEntities()
+	}
+
 	return totalDeleted, nil
 }

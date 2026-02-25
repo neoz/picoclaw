@@ -222,7 +222,15 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 		}
 	}
 
-	// 4. FTS5 search for relevant memories (exclude conversation noise)
+	// 4. Graph walk - find entities mentioned in the message, walk relations
+	if userMessage != "" {
+		graphMemories := cb.buildGraphMemoryContext(userMessage, seenKeys)
+		if graphMemories != "" {
+			parts = append(parts, graphMemories)
+		}
+	}
+
+	// 5. FTS5 search for relevant memories (exclude conversation noise, dedupe with graph)
 	if userMessage != "" {
 		results, err := cb.memoryDB.Search(userMessage, topK)
 		if err == nil && len(results) > 0 {
@@ -255,6 +263,88 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 	}
 
 	return "# Memory\n\n" + strings.Join(parts, "\n")
+}
+
+// buildGraphMemoryContext walks the knowledge graph for entities found in the message.
+// It returns a formatted section of graph-related memories, updating seenKeys to prevent duplicates.
+func (cb *ContextBuilder) buildGraphMemoryContext(userMessage string, seenKeys map[string]bool) string {
+	if cb.memoryDB == nil {
+		return ""
+	}
+
+	// Get all known entity names
+	entityNames, err := cb.memoryDB.AllEntityNames()
+	if err != nil || len(entityNames) == 0 {
+		return ""
+	}
+
+	// Find which entities appear in the user message (case-insensitive substring match)
+	msgLower := strings.ToLower(userMessage)
+	var matched []string
+	for _, name := range entityNames {
+		if len(name) < 2 {
+			continue // skip very short names to avoid false matches
+		}
+		if strings.Contains(msgLower, strings.ToLower(name)) {
+			matched = append(matched, name)
+		}
+	}
+	if len(matched) == 0 {
+		return ""
+	}
+
+	// Walk the graph from matched entities
+	nodes, err := cb.memoryDB.WalkGraph(matched, 2, 15)
+	if err != nil || len(nodes) == 0 {
+		return ""
+	}
+
+	// Collect unique memory keys from relations
+	memoryKeys := make(map[string]bool)
+	for _, node := range nodes {
+		for _, rel := range node.Relations {
+			if rel.MemoryKey != "" {
+				memoryKeys[rel.MemoryKey] = true
+			}
+		}
+	}
+
+	if len(memoryKeys) == 0 {
+		return ""
+	}
+
+	// Fetch memories by key and build output
+	var sb strings.Builder
+	sb.WriteString("## Graph Context\n\n")
+	added := 0
+	for key := range memoryKeys {
+		if seenKeys[key] {
+			continue
+		}
+		entry := cb.memoryDB.Get(key)
+		if entry == nil {
+			continue
+		}
+		if entry.Category == "conversation" {
+			continue
+		}
+		seenKeys[key] = true
+		sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", entry.Key, entry.Category, entry.Content))
+		added++
+	}
+
+	if added == 0 {
+		return ""
+	}
+
+	logger.DebugCF("agent", "Graph context injected",
+		map[string]interface{}{
+			"matched_entities": matched,
+			"graph_nodes":      len(nodes),
+			"memories_added":   added,
+		})
+
+	return sb.String()
 }
 
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {

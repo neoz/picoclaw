@@ -21,7 +21,7 @@ func (t *MemorySearchTool) Name() string {
 }
 
 func (t *MemorySearchTool) Description() string {
-	return "Search across all memory entries using full-text search with BM25 ranking. Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
+	return "Search across all memory entries . Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
 }
 
 func (t *MemorySearchTool) Parameters() map[string]interface{} {

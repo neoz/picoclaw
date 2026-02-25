@@ -54,6 +54,12 @@ func Open(workspace string) (*MemoryDB, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
+	// Enable foreign keys for cascade deletes (graph relations)
+	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
 	mdb := &MemoryDB{
 		db:        db,
 		workspace: workspace,
@@ -63,6 +69,11 @@ func Open(workspace string) (*MemoryDB, error) {
 	if err := mdb.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
+	}
+
+	if err := mdb.createGraphSchema(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create graph schema: %w", err)
 	}
 
 	return mdb, nil

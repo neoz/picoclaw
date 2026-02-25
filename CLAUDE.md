@@ -101,6 +101,10 @@ Memory is SQLite-backed (`pkg/memory/`). Three tools: `memory_store`, `memory_se
 
 Adding a memory feature: modify `pkg/memory/` for storage logic, `pkg/tools/memory_*.go` for tool interface, `pkg/agent/context.go` for prompt injection.
 
+**Knowledge graph layer**: `graph.go` stores entity-relation triples (entities + relations tables) linked to memories via `memory_key` (text field, NOT a FK). `graph_schema.go` holds DDL. `memory_store` tool accepts optional `relations` parameter. `context.go` `buildGraphMemoryContext()` does entity matching + BFS walk for graph-first context injection, falling back to FTS5. **Retention cleanup chain** (in `retention.go`): delete expired memories -> `CleanStaleRelations()` (remove relations whose `memory_key` no longer exists in memories) -> `CleanOrphanedEntities()` (remove entities with zero relations). All three steps are required in order.
+
+**Memory tests**: `pkg/memory/graph_test.go`. Helper `openTestDB(t)` uses `t.TempDir()` + `t.Cleanup`. For retention tests, backdate `updated_at` via `db.db.Exec` (same-package access) since `RunRetention` skips `days <= 0` and freshly-stored entries won't be older than the cutoff.
+
 **Auto-save flow**: When `memory.auto_save=true`, each user message is stored in `loop.go` (step 3.5) with key `conv_{channel}_{chatID}_{millisTimestamp}` and category `conversation` (7-day retention). Only user messages are saved, not assistant responses. `memory_search` with empty query falls back to `List()` to support browsing.
 
 ## Agent Orchestrator
