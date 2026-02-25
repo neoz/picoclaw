@@ -423,6 +423,11 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		"is_group":   fmt.Sprintf("%t", isGroup),
 	}
 
+	// Route to specific agent if allow_from entry has ":agentID" suffix
+	if agentID := c.ResolveAgentID(senderID); agentID != "" {
+		metadata["agent_id"] = agentID
+	}
+
 	sessionKey := fmt.Sprintf("%s:%s", c.name, chatIDStr)
 	c.bus.PublishInbound(bus.InboundMessage{
 		Channel:    c.name,
