@@ -156,6 +156,7 @@ func newAgentInstance(
 
 	// Per-agent STM tool (backed by this agent's session manager)
 	registerIfAllowed(tools.NewSTMTool(sessionsManager))
+	registerIfAllowed(tools.NewSessionMessagesTool(sessionsManager))
 
 	// Context builder
 	contextBuilder := NewContextBuilder(workspace)
