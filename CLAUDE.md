@@ -21,7 +21,7 @@ make clean              # Remove build artifacts
 make run ARGS="agent"   # Build and run with arguments
 ```
 
-Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/`.
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`, `pkg/session/manager_test.go`, `pkg/tools/session_messages_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/` or `go test ./pkg/session/` or `go test ./pkg/tools/`.
 
 ## Architecture
 
@@ -47,7 +47,7 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/c
 
 - **secrets/** - ChaCha20-Poly1305 AEAD encryption for sensitive config values. `SecretStore` in `secrets.go` manages key loading/generation and encrypt/decrypt. Key file: `~/.picoclaw/.secret_key` (32 random bytes, hex-encoded, 0600 perms). Encrypted format: `enc:<hex(nonce||ciphertext||tag)>`. Values without `enc:` prefix pass through as plaintext.
 
-- **session/** - File-based session persistence (JSON in `workspace/sessions/`). Sessions keyed as `channel:chatID`. Also stores `MessageLog` (searchable message history with 30-day retention) used by the `message_history` tool. `MessageLogEntry` includes `sender_name` for human-readable display. Filenames use `SanitizeSessionKey()` (`:` replaced with `_`) for Windows compatibility.
+- **session/** - File-based session persistence (JSON in `workspace/sessions/`). Sessions keyed as `channel:chatID`. Also stores `MessageLog` (searchable message history with 30-day retention) used by the `message_history` and `session_messages` tools. `ListSessionKeys()` returns all loaded session keys (sorted). `MessageLogEntry` includes `sender_name` for human-readable display. Filenames use `SanitizeSessionKey()` (`:` replaced with `_`) for Windows compatibility.
 
 - **skills/** - Markdown-based skill system. Skills are SKILL.md files auto-discovered from `workspace/skills/`. Can be installed from GitHub repos.
 
@@ -64,6 +64,8 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/c
 - **ContextualTool**: Tools needing channel/chatID implement `SetContext(channel, chatID)`. Context is updated per-message in `updateToolContexts()` in `loop.go`. All ContextualTool implementations must use `sync.Mutex` to guard their channel/chatID fields, since background goroutines (`maybeSummarize`, `RunDelegateAsync`) may read them concurrently with the main loop writing via `updateToolContexts()`.
 - **DelegateRunner pattern**: Tools needing agent loop access (e.g. `delegate.go`) define an interface in `tools/base.go` (`DelegateRunner`), implemented by `AgentLoop` in `loop.go`. This avoids circular imports between `pkg/tools` and `pkg/agent`.
 - **Shared utilities**: `tools/bm25.go` provides `tokenize()` and `bm25Rank()` for BM25-ranked text search. Used by `message_history` tool. The `memory_search` tool now uses SQLite FTS5 instead.
+- **Tool file naming**: `message_history` tool is in `stm.go`, `session_messages` tool is in `session_messages.go`. Tool names don't always match filenames.
+- **session_messages tool**: Cross-session message access via explicit `session_key` parameter (`list`/`recent`/`search` actions). Per-agent in `instance.go`, not `ContextualTool`. Reuses `formatLogEntries()` and `bm25Rank()` from the same package. `ListSessionKeys()` on `SessionManager` provides the session enumeration.
 - **Channel registration**: New channels embed `BaseChannel`, implement the channel interface, and are registered in `channels/manager.go`.
 - **Per-user agent routing**: `allow_from` entries support `"user:agentID"` suffix (e.g. `"bob:limited"`). `BaseChannel.ResolveAgentID()` parses the suffix; `HandleMessage()` and Telegram's direct publish inject `metadata["agent_id"]`. The suffix is stripped before matching in `matchAllowEntry()`. Telegram bypasses `BaseChannel.HandleMessage()`, so agent routing must also be applied in `telegram.go` `handleMessage()` before `PublishInbound`.
 - **Telegram HTML conversion**: `telegram.go` `markdownToTelegramHTML()` converts markdown to Telegram HTML via sequential regex replacements. Order matters: bold/italic must be processed before links to prevent crossed HTML tags. Italic regex excludes `<>` to avoid wrapping around tags from earlier steps. The `Send()` method has a fallback that retries as plain text on HTML parse errors.
