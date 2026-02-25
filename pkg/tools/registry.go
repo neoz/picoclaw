@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
+	"sort"
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
@@ -81,13 +81,27 @@ func (r *ToolRegistry) ExecuteWithContext(ctx context.Context, name string, args
 	return result, err
 }
 
+// sortedToolNames returns tool names in sorted order for deterministic iteration.
+// This is critical for KV cache stability: non-deterministic map iteration would
+// produce different system prompts and tool definitions on each call, invalidating
+// the LLM's prefix cache even when no tools have changed.
+func (r *ToolRegistry) sortedToolNames() []string {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (r *ToolRegistry) GetDefinitions() []map[string]interface{} {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	definitions := make([]map[string]interface{}, 0, len(r.tools))
-	for _, tool := range r.tools {
-		definitions = append(definitions, ToolToSchema(tool))
+	sorted := r.sortedToolNames()
+	definitions := make([]map[string]any, 0, len(sorted))
+	for _, name := range sorted {
+		definitions = append(definitions, ToolToSchema(r.tools[name]))
 	}
 	return definitions
 }
@@ -97,11 +111,7 @@ func (r *ToolRegistry) List() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	names := make([]string, 0, len(r.tools))
-	for name := range r.tools {
-		names = append(names, name)
-	}
-	return names
+	return r.sortedToolNames()
 }
 
 // Count returns the number of registered tools.
@@ -117,8 +127,10 @@ func (r *ToolRegistry) GetSummaries() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	summaries := make([]string, 0, len(r.tools))
-	for _, tool := range r.tools {
+	sorted := r.sortedToolNames()
+	summaries := make([]string, 0, len(sorted))
+	for _, name := range sorted {
+		tool := r.tools[name]
 		summaries = append(summaries, fmt.Sprintf("- `%s` - %s", tool.Name(), tool.Description()))
 	}
 	return summaries
