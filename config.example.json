@@ -49,6 +49,11 @@
         "temperature": 0.1,
         "max_tool_iterations": 15,
         "skills": ["security"]
+      },
+      {
+        "id": "limited",
+        "name": "Limited Assistant",
+        "denied_tools": ["memory_store", "memory_forget", "exec"]
       }
     ]
   },
@@ -56,7 +61,7 @@
     "telegram": {
       "enabled": false,
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "allow_from": ["YOUR_USER_ID"]
+      "allow_from": ["YOUR_USER_ID", "OTHER_USER_ID:limited"]
     },
     "discord": {
       "enabled": false,

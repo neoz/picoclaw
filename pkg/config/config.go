@@ -93,6 +93,7 @@ type AgentConfig struct {
 	MaxToolIterations int              `json:"max_tool_iterations,omitempty"`
 	Temperature       *float64         `json:"temperature,omitempty"`
 	Skills            []string         `json:"skills,omitempty"`
+	DeniedTools       []string         `json:"denied_tools,omitempty"`
 	Subagents         *SubagentsConfig `json:"subagents,omitempty"`
 }
 
