@@ -91,6 +91,8 @@ Your workspace is at: %s
 }
 
 func (cb *ContextBuilder) buildToolsSection() string {
+	return ""
+	
 	if cb.tools == nil {
 		return ""
 	}
