@@ -21,7 +21,7 @@ make clean              # Remove build artifacts
 make run ARGS="agent"   # Build and run with arguments
 ```
 
-Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/`.
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/`.
 
 ## Architecture
 
@@ -60,10 +60,12 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/s
 ### Key Patterns
 
 - **Tool registration**: New tools implement the `Tool` interface. Workspace-scoped tools (filesystem, exec, edit) are per-agent in `instance.go`. Shared tools (web, memory, message, cost) are created once in `loop.go` `buildSharedTools()` and registered on all agents. External tools (e.g. cron) use `agentLoop.RegisterTool()` which registers on the default agent. Config-conditional tools (e.g. `delegate`) are registered by `initDelegateTools()` at end of `NewAgentLoop()`, only on agents with `subagents.allow_agents` set.
+- **Denied tools**: `AgentConfig.DeniedTools` filters tools in `newAgentInstance()` via a `deniedSet` + `registerIfAllowed()` pattern. Tools whose `Name()` is in the set are skipped during registration.
 - **ContextualTool**: Tools needing channel/chatID implement `SetContext(channel, chatID)`. Context is updated per-message in `updateToolContexts()` in `loop.go`. All ContextualTool implementations must use `sync.Mutex` to guard their channel/chatID fields, since background goroutines (`maybeSummarize`, `RunDelegateAsync`) may read them concurrently with the main loop writing via `updateToolContexts()`.
 - **DelegateRunner pattern**: Tools needing agent loop access (e.g. `delegate.go`) define an interface in `tools/base.go` (`DelegateRunner`), implemented by `AgentLoop` in `loop.go`. This avoids circular imports between `pkg/tools` and `pkg/agent`.
 - **Shared utilities**: `tools/bm25.go` provides `tokenize()` and `bm25Rank()` for BM25-ranked text search. Used by `message_history` tool. The `memory_search` tool now uses SQLite FTS5 instead.
 - **Channel registration**: New channels embed `BaseChannel`, implement the channel interface, and are registered in `channels/manager.go`.
+- **Per-user agent routing**: `allow_from` entries support `"user:agentID"` suffix (e.g. `"bob:limited"`). `BaseChannel.ResolveAgentID()` parses the suffix; `HandleMessage()` and Telegram's direct publish inject `metadata["agent_id"]`. The suffix is stripped before matching in `matchAllowEntry()`. Telegram bypasses `BaseChannel.HandleMessage()`, so agent routing must also be applied in `telegram.go` `handleMessage()` before `PublishInbound`.
 - **Telegram HTML conversion**: `telegram.go` `markdownToTelegramHTML()` converts markdown to Telegram HTML via sequential regex replacements. Order matters: bold/italic must be processed before links to prevent crossed HTML tags. Italic regex excludes `<>` to avoid wrapping around tags from earlier steps. The `Send()` method has a fallback that retries as plain text on HTML parse errors.
 - **Telego reply API**: `SendMessageParams` uses `ReplyParameters: &telego.ReplyParameters{MessageID: id}`, not a flat `ReplyToMessageID` field. Use `go doc github.com/mymmrac/telego.SendMessageParams` to check struct fields.
 - **Telegram temp access**: `/allow @username` command in groups (handled at channel level, never reaches agent). Uses `sync.Map` with time-window TTL (not one-shot). Allowed users only.
