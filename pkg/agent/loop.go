@@ -37,8 +37,9 @@ type AgentLoop struct {
 	memoryDB    *memory.MemoryDB
 	memoryCfg    *config.MemoryConfig
 	costTracker  *cost.CostTracker
-	promptGuard  *security.PromptGuard
-	leakDetector *security.LeakDetector
+	promptGuard       *security.PromptGuard
+	leakDetector      *security.LeakDetector
+	promptLeakGuards  sync.Map // agentID -> *security.PromptLeakDetector
 }
 
 // processOptions configures how a message is processed
@@ -507,6 +508,27 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		}
 	}
 
+	// 5.6. Prompt leak guard: detect system prompt content in output
+	if al.cfg.Security.PromptLeakGuard.Enabled {
+		plg := al.getPromptLeakGuard(inst)
+		if plg != nil {
+			plResult := plg.Scan(finalContent)
+			if plResult.Leaked {
+				logger.WarnCF("security", "System prompt leakage detected in response",
+					map[string]interface{}{
+						"matched":     plResult.MatchedCount,
+						"total":       plResult.TotalPrints,
+						"score":       plResult.Score,
+						"action":      string(plResult.Action),
+						"session_key": opts.SessionKey,
+					})
+				if plResult.Action == security.ActionBlock {
+					finalContent = "I'm unable to share my system instructions."
+				}
+			}
+		}
+	}
+
 	// 6. Save final assistant message to session
 	inst.Sessions.AddMessage(opts.SessionKey, "assistant", finalContent)
 	inst.Sessions.AddToLog(opts.SessionKey, finalContent, "assistant", "")
@@ -536,6 +558,28 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		})
 
 	return finalContent, nil
+}
+
+// getPromptLeakGuard returns a cached PromptLeakDetector for the given agent instance.
+// The detector is lazily created from the agent's stable system prompt (excluding
+// per-message memory/session context) and cached in promptLeakGuards.
+func (al *AgentLoop) getPromptLeakGuard(inst *AgentInstance) *security.PromptLeakDetector {
+	if v, ok := al.promptLeakGuards.Load(inst.ID); ok {
+		return v.(*security.PromptLeakDetector)
+	}
+	systemPrompt := inst.ContextBuilder.BuildSystemPrompt()
+	plg := security.NewPromptLeakDetector(
+		systemPrompt,
+		al.cfg.Security.PromptLeakGuard.Threshold,
+		al.cfg.Security.PromptLeakGuard.Action,
+	)
+	al.promptLeakGuards.Store(inst.ID, plg)
+	logger.DebugCF("security", "Prompt leak guard initialized",
+		map[string]interface{}{
+			"agent_id":     inst.ID,
+			"fingerprints": plg.FingerprintCount(),
+		})
+	return plg
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.

@@ -198,6 +198,11 @@
     "leak_detector": {
       "enabled": false,
       "sensitivity": 0.7
+    },
+    "prompt_leak_guard": {
+      "enabled": false,
+      "threshold": 0.15,
+      "action": "block"
     }
   }
 }

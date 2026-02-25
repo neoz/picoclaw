@@ -30,8 +30,9 @@ type Config struct {
 }
 
 type SecurityConfig struct {
-	PromptGuard  PromptGuardConfig  `json:"prompt_guard"`
-	LeakDetector LeakDetectorConfig `json:"leak_detector"`
+	PromptGuard      PromptGuardConfig      `json:"prompt_guard"`
+	LeakDetector     LeakDetectorConfig     `json:"leak_detector"`
+	PromptLeakGuard  PromptLeakGuardConfig  `json:"prompt_leak_guard"`
 }
 
 type PromptGuardConfig struct {
@@ -43,6 +44,12 @@ type PromptGuardConfig struct {
 type LeakDetectorConfig struct {
 	Enabled     bool    `json:"enabled" env:"PICOCLAW_SECURITY_LEAK_DETECTOR_ENABLED"`
 	Sensitivity float64 `json:"sensitivity" env:"PICOCLAW_SECURITY_LEAK_DETECTOR_SENSITIVITY"`
+}
+
+type PromptLeakGuardConfig struct {
+	Enabled   bool    `json:"enabled" env:"PICOCLAW_SECURITY_PROMPT_LEAK_GUARD_ENABLED"`
+	Threshold float64 `json:"threshold" env:"PICOCLAW_SECURITY_PROMPT_LEAK_GUARD_THRESHOLD"`
+	Action    string  `json:"action" env:"PICOCLAW_SECURITY_PROMPT_LEAK_GUARD_ACTION"`
 }
 
 type ModelPriceConfig struct {
@@ -325,6 +332,11 @@ func DefaultConfig() *Config {
 			LeakDetector: LeakDetectorConfig{
 				Enabled:     false,
 				Sensitivity: 0.7,
+			},
+			PromptLeakGuard: PromptLeakGuardConfig{
+				Enabled:   false,
+				Threshold: 0.15,
+				Action:    "block",
 			},
 		},
 	}
