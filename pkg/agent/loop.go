@@ -257,6 +257,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 func (al *AgentLoop) resolveAgent(msg bus.InboundMessage) *AgentInstance {
 	if agentID := msg.Metadata["agent_id"]; agentID != "" {
 		if inst, ok := al.registry.Get(agentID); ok {
+			logger.InfoCF("agent", fmt.Sprintf("Routing sender %s to agent %q", msg.SenderID, agentID), nil)
 			return inst
 		}
 	}
