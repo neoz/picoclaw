@@ -126,9 +126,10 @@ type WhatsAppConfig struct {
 }
 
 type TelegramConfig struct {
-	Enabled   bool     `json:"enabled" env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
-	Token     string   `json:"token" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	AllowFrom []string `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	Enabled        bool     `json:"enabled" env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
+	Token          string   `json:"token" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
+	AllowFrom      []string `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	TempAllowAgent string   `json:"temp_allow_agent,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_TEMP_ALLOW_AGENT"`
 }
 
 type FeishuConfig struct {

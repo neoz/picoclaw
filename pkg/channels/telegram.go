@@ -328,6 +328,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
+	tempAllowed := false
 
 	// Handle /allow command in groups: allowed users can grant temp access
 	if isGroup && allowed && strings.HasPrefix(content, "/allow ") {
@@ -380,6 +381,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		if !allowed {
 			if c.checkTempAllow(chatID, user) {
 				allowed = true
+				tempAllowed = true
 				log.Printf("Telegram message from %s: temp allow active", senderID)
 			} else {
 				log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
@@ -423,8 +425,13 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		"is_group":   fmt.Sprintf("%t", isGroup),
 	}
 
-	// Route to specific agent if allow_from entry has ":agentID" suffix
-	if agentID := c.ResolveAgentID(senderID); agentID != "" {
+	// Route to specific agent: temp-allowed users use temp_allow_agent config,
+	// regular users use allow_from ":agentID" suffix
+	if tempAllowed {
+		if agentID := c.config.TempAllowAgent; agentID != "" {
+			metadata["agent_id"] = agentID
+		}
+	} else if agentID := c.ResolveAgentID(senderID); agentID != "" {
 		metadata["agent_id"] = agentID
 	}
 
