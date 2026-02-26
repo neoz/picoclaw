@@ -3,6 +3,7 @@
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
       "model": "glm-4.7",
+      "provider": "",
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
@@ -28,6 +29,7 @@
         "id": "coder",
         "name": "Code Assistant",
         "model": "anthropic/claude-sonnet-4",
+        "provider": "anthropic",
         "workspace": "~/.picoclaw/workspace/coder",
         "max_tokens": 16384,
         "temperature": 0.3,

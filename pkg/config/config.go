@@ -96,6 +96,7 @@ type AgentConfig struct {
 	Workspace         string           `json:"workspace,omitempty"`
 	Default           bool             `json:"default,omitempty"`
 	Model             string           `json:"model,omitempty"`
+	Provider          string           `json:"provider,omitempty"`
 	MaxTokens         int              `json:"max_tokens,omitempty"`
 	MaxToolIterations int              `json:"max_tool_iterations,omitempty"`
 	Temperature       *float64         `json:"temperature,omitempty"`
@@ -111,6 +112,7 @@ type SubagentsConfig struct {
 type AgentDefaults struct {
 	Workspace         string  `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
 	Model             string  `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
+	Provider          string  `json:"provider,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
 	MaxTokens         int     `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature       float64 `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
 	MaxToolIterations int     `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`

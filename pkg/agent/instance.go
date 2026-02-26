@@ -89,8 +89,13 @@ func newAgentInstance(
 		name = agentCfg.ID
 	}
 
+	providerName := agentCfg.Provider
+	if providerName == "" {
+		providerName = cfg.Agents.Defaults.Provider
+	}
+
 	// Create per-agent provider
-	provider, err := providers.CreateProviderForModel(model, cfg)
+	provider, err := providers.CreateProviderForModel(model, providerName, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", agentCfg.ID, err)
 	}
