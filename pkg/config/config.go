@@ -93,6 +93,7 @@ type AgentsConfig struct {
 type AgentConfig struct {
 	ID                string           `json:"id"`
 	Name              string           `json:"name,omitempty"`
+	Description       string           `json:"description,omitempty"`
 	Workspace         string           `json:"workspace,omitempty"`
 	Default           bool             `json:"default,omitempty"`
 	Model             string           `json:"model,omitempty"`

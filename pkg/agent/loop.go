@@ -801,6 +801,19 @@ func (al *AgentLoop) initDelegateTools() {
 		dt := tools.NewDelegateTool(al, inst.Subagents.AllowAgents)
 		inst.Tools.Register(dt)
 		logger.InfoCF("agent", fmt.Sprintf("Registered delegate tool on agent %q (targets: %v)", inst.ID, inst.Subagents.AllowAgents), nil)
+
+		// Build subagent info for system prompt injection
+		var subagentInfos []SubagentInfo
+		for _, targetID := range inst.Subagents.AllowAgents {
+			if target, ok := al.registry.Get(targetID); ok {
+				subagentInfos = append(subagentInfos, SubagentInfo{
+					ID:          target.ID,
+					Name:        target.Name,
+					Description: target.Description,
+				})
+			}
+		}
+		inst.ContextBuilder.SetSubagents(subagentInfos)
 	}
 }
 
@@ -866,7 +879,7 @@ func (al *AgentLoop) ListAgents() []tools.AgentInfo {
 	agents := al.registry.List()
 	infos := make([]tools.AgentInfo, 0, len(agents))
 	for _, a := range agents {
-		infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name})
+		infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name, Description: a.Description})
 	}
 	return infos
 }

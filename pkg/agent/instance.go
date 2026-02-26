@@ -19,6 +19,7 @@ import (
 type AgentInstance struct {
 	ID             string
 	Name           string
+	Description    string
 	Model          string
 	Workspace      string
 	MaxIterations  int
@@ -180,6 +181,7 @@ func newAgentInstance(
 	return &AgentInstance{
 		ID:             agentCfg.ID,
 		Name:           name,
+		Description:    agentCfg.Description,
 		Model:          model,
 		Workspace:      workspace,
 		MaxIterations:  maxIterations,

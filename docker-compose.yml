@@ -8,7 +8,7 @@ services:
     ports:
       - "18790:18790"
     volumes:
-      - ./config.json:/home/picoclaw/.picoclaw/config.json
+      - ./config${ENVIRONMENT:+.${ENVIRONMENT}}.json:/home/picoclaw/.picoclaw/config.json
       - ./.secret_key:/home/picoclaw/.picoclaw/.secret_key
       - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
     environment:

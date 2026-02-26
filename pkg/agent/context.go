@@ -15,11 +15,19 @@ import (
 	"github.com/sipeed/picoclaw/pkg/skills"
 )
 
+// SubagentInfo describes a delegatable agent for system prompt injection.
+type SubagentInfo struct {
+	ID          string
+	Name        string
+	Description string
+}
+
 type ContextBuilder struct {
 	workspace    string
 	skillsLoader *skills.SkillsLoader
 	memoryDB     *memory.MemoryDB
 	memoryCfg    *config.MemoryConfig
+	subagents    []SubagentInfo
 }
 
 func getGlobalConfigDir() string {
@@ -48,6 +56,11 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 func (cb *ContextBuilder) SetMemoryDB(db *memory.MemoryDB, cfg *config.MemoryConfig) {
 	cb.memoryDB = db
 	cb.memoryCfg = cfg
+}
+
+// SetSubagents configures the list of delegatable agents for system prompt injection.
+func (cb *ContextBuilder) SetSubagents(agents []SubagentInfo) {
+	cb.subagents = agents
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -117,6 +130,11 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 %s`, skillsSummary))
 	}
 
+	// Orchestration instructions for agents with subagents
+	if len(cb.subagents) > 0 {
+		parts = append(parts, cb.buildDelegationPrompt())
+	}
+
 	// Memory context is now injected per-message via buildRelevantMemoryContext()
 
 	// Join with "---" separator
@@ -140,6 +158,23 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 	}
 
 	return result
+}
+
+// buildDelegationPrompt generates orchestration instructions for agents with subagents.
+func (cb *ContextBuilder) buildDelegationPrompt() string {
+	var sb strings.Builder
+	sb.WriteString("## Delegation\n\n")
+	sb.WriteString("You are an orchestrator agent. When a user's request matches a specialist agent's expertise, you MUST use the `delegate` tool to route the task to that agent instead of handling it yourself.\n\n")
+	sb.WriteString("Available specialist agents:\n")
+	for _, a := range cb.subagents {
+		sb.WriteString(fmt.Sprintf("- **%s** (%s)", a.ID, a.Name))
+		if a.Description != "" {
+			sb.WriteString(": " + a.Description)
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\nAlways prefer delegating to a specialist when one is available for the task.")
+	return sb.String()
 }
 
 // buildRelevantMemoryContext returns memory context relevant to the user message.

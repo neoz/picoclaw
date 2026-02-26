@@ -26,8 +26,9 @@ type DelegateRunner interface {
 
 // AgentInfo holds basic metadata about an available agent.
 type AgentInfo struct {
-	ID   string
-	Name string
+	ID          string
+	Name        string
+	Description string
 }
 
 func ToolToSchema(tool Tool) map[string]interface{} {
