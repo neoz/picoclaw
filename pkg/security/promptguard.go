@@ -117,10 +117,84 @@ func defaultGuardCategories() []guardCategory {
 					`)`,
 			),
 		},
+		{
+			name:  "jailbreak:persona",
+			score: 0.85,
+			pattern: regexp.MustCompile(
+				`(?i)(` +
+					`jailbr(eak|oken|oke)` +
+					`|evil\s+(mode|version|twin|persona)` +
+					`|god\s+mode` +
+					`|sudo\s+mode` +
+					`|unfiltered\s+(mode|version|response)` +
+					`|uncensored\s+(mode|version|response)` +
+					`|no\s+(rules|limits|boundaries)\s+mode` +
+					`|chaos\s+mode` +
+					`|unrestricted\s+(mode|ai|assistant)` +
+					`|anti[\s-]?alignment` +
+					`)`,
+			),
+		},
+		{
+			name:  "jailbreak:roleplay_bypass",
+			score: 0.8,
+			pattern: regexp.MustCompile(
+				`(?i)(` +
+					`as\s+a\s+(fictional|hypothetical|imaginary)\s+(ai|character|assistant)` +
+					`|for\s+(educational|research|academic)\s+purposes?\s+only` +
+					`|this\s+is\s+(just\s+)?(fiction|a\s+story|roleplay|creative\s+writing)` +
+					`|in\s+this\s+(fictional|alternate)\s+(universe|world|reality|scenario)` +
+					`|imagine\s+you\s+(have|had)\s+no\s+(restrictions|rules|limits|guidelines)` +
+					`|hypothetically[\s,]+if\s+you\s+(had|were|could)` +
+					`|what\s+would\s+(an?\s+)?(evil|unrestricted|unfiltered)\s+(ai|assistant|version)` +
+					`)`,
+			),
+		},
+		{
+			name:  "jailbreak:encoding_evasion",
+			score: 0.7,
+			pattern: regexp.MustCompile(
+				`(?i)(` +
+					`base64\s+encode` +
+					`|rot13` +
+					`|hex\s+(encode|decode|convert)` +
+					`|unicode\s+escape` +
+					`|encode\s+(this|the|your)\s+(response|output|answer)\s+in` +
+					`|respond\s+in\s+(base64|hex|rot13|binary|morse)` +
+					`|translate\s+(this|your\s+response)\s+(to|into)\s+(base64|hex|rot13|binary)` +
+					`|write\s+(it|this|your\s+answer)\s+(backwards|reversed|in\s+reverse)` +
+					`)`,
+			),
+		},
+		{
+			name:  "prompt_leak",
+			score: 0.95,
+			pattern: regexp.MustCompile(
+				`(?i)(` +
+					`(show|print|display|reveal|output|repeat|tell\s+me|give\s+me|what\s+(is|are))\s+(me\s+)?(the\s+|your\s+)?(system\s+prompt|system\s+message|system\s+instructions?)` +
+					`|what\s+(is|was)\s+(in\s+)?(the\s+|your\s+)(initial|original|first|hidden|secret)\s+(prompt|instructions?|message)` +
+					`|(ignore|forget)\s+everything\s+and\s+(repeat|print|show|output|display)` +
+					`|(copy|paste|echo|dump|leak|extract)\s+(the\s+|your\s+)?(system|initial|original|hidden)\s+(prompt|instructions?|message)` +
+					`)`,
+			),
+		},
+		{
+			name:  "prompt_leak:indirect",
+			score: 0.8,
+			pattern: regexp.MustCompile(
+				`(?i)(` +
+					`(what|how)\s+(were|are)\s+you\s+(programmed|configured|instructed|prompted|initialized|set\s+up)` +
+					`|(list|enumerate|describe)\s+(all\s+)?(the\s+|your\s+)(rules|instructions?|directives?|constraints?|guidelines?)` +
+					`|what\s+(rules|instructions?|guidelines?|constraints?)\s+(are\s+you|do\s+you|were\s+you|have\s+you\s+been)\s+(given|following|under|told|bound\s+by)` +
+					`|summarize\s+(your|the)\s+(instructions?|prompt|rules|directives?|guidelines?|programming)` +
+					`|above\s+(text|prompt|instructions?|messages?)\s+(verbatim|exactly|word[\s-]for[\s-]word)` +
+					`)`,
+			),
+		},
 	}
 }
 
-const maxGuardScore = 7.5
+const maxGuardScore = 11.6
 
 // Scan checks input content for prompt injection patterns.
 func (pg *PromptGuard) Scan(content string) GuardResult {
