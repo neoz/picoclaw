@@ -331,12 +331,36 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	tempAllowed := false
 
 	// Handle /allow command in groups: allowed users can grant temp access
-	if isGroup && allowed && strings.HasPrefix(content, "/allow ") {
-		target := strings.TrimSpace(strings.TrimPrefix(content, "/allow "))
-		target = strings.TrimPrefix(target, "@")
-		if target != "" {
-			c.grantTempAllow(chatID, target)
-			replyText := fmt.Sprintf("Granted @%s temporary access for %d minutes.", target, int(tempAllowTTL.Minutes()))
+	if isGroup && allowed && (content == "/allow" || strings.HasPrefix(content, "/allow ")) {
+		arg := strings.TrimSpace(strings.TrimPrefix(content, "/allow"))
+		arg = strings.TrimPrefix(arg, "@")
+
+		var targetName string
+		var targetID int64
+
+		if arg != "" {
+			// Explicit target: /allow @username or /allow 123456
+			if id, err := strconv.ParseInt(arg, 10, 64); err == nil {
+				targetID = id
+			} else {
+				targetName = arg
+			}
+		} else if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
+			// Reply-based: reply to a message with /allow
+			replyUser := message.ReplyToMessage.From
+			targetName = replyUser.Username
+			targetID = replyUser.ID
+		}
+
+		if targetName != "" || targetID != 0 {
+			c.grantTempAllow(chatID, targetName, targetID)
+			var displayName string
+			if targetName != "" {
+				displayName = "@" + targetName
+			} else {
+				displayName = fmt.Sprintf("user %d", targetID)
+			}
+			replyText := fmt.Sprintf("Granted %s temporary access for %d minutes.", displayName, int(tempAllowTTL.Minutes()))
 			c.sendWithRetry(func() error {
 				_, e := c.bot.SendMessage(ctx, &telego.SendMessageParams{
 					ChatID: tu.ID(chatID),
@@ -538,11 +562,24 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 
 const tempAllowTTL = 10 * time.Minute
 
-// grantTempAllow stores a temp allow for a target username in a specific chat.
-func (c *TelegramChannel) grantTempAllow(chatID int64, username string) {
-	key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(username))
-	c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
-	log.Printf("Temp allow granted for @%s in chat %d (expires in %v)", username, chatID, tempAllowTTL)
+// grantTempAllow stores a temp allow for a target in a specific chat.
+// It stores both username and user ID keys when available so that users
+// without a Telegram username can still be matched by their numeric ID.
+func (c *TelegramChannel) grantTempAllow(chatID int64, username string, userID int64) {
+	expiry := time.Now().Add(tempAllowTTL)
+	if username != "" {
+		key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(username))
+		c.tempAllows.Store(key, expiry)
+	}
+	if userID != 0 {
+		key := fmt.Sprintf("%d:%d", chatID, userID)
+		c.tempAllows.Store(key, expiry)
+	}
+	if username != "" {
+		log.Printf("Temp allow granted for @%s (ID %d) in chat %d (expires in %v)", username, userID, chatID, tempAllowTTL)
+	} else {
+		log.Printf("Temp allow granted for user ID %d in chat %d (expires in %v)", userID, chatID, tempAllowTTL)
+	}
 }
 
 // checkTempAllow checks if a user has an active temp allow (time-window, not one-shot).
