@@ -160,7 +160,7 @@ func newAgentInstance(
 
 	// Context builder
 	contextBuilder := NewContextBuilder(workspace)
-	contextBuilder.SetToolsRegistry(toolsRegistry)
+	
 	if memDB != nil {
 		contextBuilder.SetMemoryDB(memDB, memoryCfg)
 	}
