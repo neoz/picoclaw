@@ -57,6 +57,14 @@
         "id": "limited",
         "name": "Limited Assistant",
         "denied_tools": ["memory_store", "memory_forget", "exec"]
+      },
+      {
+        "id": "poem",
+        "name": "Poem Specialist",
+        "description": "Writes creative poems in any style",
+        "instructions": "You are a creative poet. Write poems in the requested style. Be expressive and original.",
+        "context": ["identity", "bootstrap", "safety", "skills", "memory"],
+        "denied_tools": ["exec", "write_file", "edit_file"]
       }
     ]
   },

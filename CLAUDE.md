@@ -21,7 +21,7 @@ make clean              # Remove build artifacts
 make run ARGS="agent"   # Build and run with arguments
 ```
 
-Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`, `pkg/session/manager_test.go`, `pkg/tools/session_messages_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/` or `go test ./pkg/session/` or `go test ./pkg/tools/`.
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/agent/context_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`, `pkg/security/promptleak_test.go`, `pkg/session/manager_test.go`, `pkg/tools/session_messages_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/` or `go test ./pkg/session/` or `go test ./pkg/tools/`.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/c
 
 ### Core Packages (pkg/)
 
-- **agent/** - Multi-agent system. `loop.go` orchestrates message processing via `AgentRegistry`. `instance.go` defines `AgentInstance` (per-agent provider, sessions, tools, context builder) with factory `newAgentInstance()`. `registry.go` provides `AgentRegistry` for agent lookup by ID with a default fallback. `context.go` builds system prompts from workspace files and injects relevance-filtered memory context per message. Agent dispatch: `msg.Metadata["agent_id"]` routes to a specific agent; unset routes to default.
+- **agent/** - Multi-agent system. `loop.go` orchestrates message processing via `AgentRegistry`. `instance.go` defines `AgentInstance` (per-agent provider, sessions, tools, context builder) with factory `newAgentInstance()`. `registry.go` provides `AgentRegistry` for agent lookup by ID with a default fallback. `context.go` builds system prompts from workspace files and injects relevance-filtered memory context per message. `context.go` also supports lightweight per-agent prompts via `SetInstructions()`: when `AgentConfig.Instructions` is set, `BuildSystemPrompt()` uses only the instructions text + sections opted in via `AgentConfig.Context` (values: `"identity"`, `"bootstrap"`, `"safety"`, `"skills"`, `"memory"`). Delegation section is always included when subagents exist. Memory auto-injection in `BuildMessages()` is gated by `"memory"` being in context sections. Agent dispatch: `msg.Metadata["agent_id"]` routes to a specific agent; unset routes to default.
 
 - **memory/** - SQLite + FTS5 memory system (pure Go, no CGO via `modernc.org/sqlite`). `db.go` manages schema/lifecycle, `store.go` CRUD, `search.go` full-text search with BM25, `retention.go` category-based cleanup, `migrate.go` one-time markdown migration, `snapshot.go` export/import. Database at `workspace/memory/memory.db`. Categories: core (permanent), daily (30d), conversation (7d), custom (90d).
 
@@ -53,7 +53,13 @@ Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/c
 
 - **cron/** - Scheduled job service with both interval ("every N seconds") and cron expression support. Jobs stored in `workspace/cron/jobs.json`.
 
-- **security/** - Input/output security scanning. `promptguard.go` detects prompt injection (system override, role confusion, tool call injection, secret extraction, command injection subtypes, jailbreak) via regex scoring with configurable sensitivity/action. `leakdetector.go` detects and redacts credentials (API keys, AWS, private keys, JWTs, database URLs, generic secrets) in outbound content. Both initialized in `loop.go` `NewAgentLoop()` when `cfg.Security` is enabled. Tests: `go test ./pkg/security/`.
+- **security/** - Input/output security scanning. `promptguard.go` detects prompt injection (system override, role confusion, tool call injection, secret extraction, command injection subtypes, jailbreak) via regex scoring with configurable sensitivity/action. `leakdetector.go` detects and redacts credentials (API keys, AWS, private keys, JWTs, database URLs, generic secrets) in outbound content. `promptleak.go` detects system prompt reproduction in LLM output via fingerprint matching (extracts meaningful lines from system prompt, flags when too many appear in response); configured via `security.prompt_leak_guard` (enabled/threshold/action). All three initialized in `loop.go` `NewAgentLoop()` when `cfg.Security` is enabled. Tests: `go test ./pkg/security/`.
+
+- **heartbeat/** - Periodic heartbeat service. `HeartbeatService` reads a prompt file from workspace, sends it through the agent loop, and delivers the response to a configured channel/chatID. Config: `heartbeat.enabled`, `interval_seconds`, `channel`. Integrated in `main.go` `agentCmd`/`gatewayCmd`.
+
+- **cost/** - API usage cost tracking with budget enforcement. `CostTracker` in `tracker.go` persists records as JSONL, tracks daily/monthly totals, enforces `daily_limit_usd`/`monthly_limit_usd` with `warn_at_percent`. `pricing.go` has built-in model prices with config-level overrides via `cost.prices`. `types.go` defines `CostRecord`. Shared tool `cost_summary` exposes stats. Config: `cost.enabled`, `cost.daily_limit_usd`, `cost.monthly_limit_usd`.
+
+- **utils/** - Small shared utilities. `string.go` provides `Truncate()` for Unicode-safe string truncation.
 
 - **voice/** - Voice transcription via Groq Whisper API, attached to Telegram/Discord channels.
 
@@ -85,9 +91,11 @@ Config file: `~/.picoclaw/config.json` (see `config.example.json` for template).
 
 **NewAgentLoop signature**: `NewAgentLoop(cfg, msgBus) (*AgentLoop, error)` -- provider creation is internal. Entry points (`agentCmd`, `gatewayCmd` in `main.go`) no longer call `CreateProvider` directly.
 
-Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit), `secrets` (encrypt toggle for config field encryption), `security` (prompt_guard: enabled/action/sensitivity, leak_detector: enabled/sensitivity).
+Key sections: `agents.defaults` (model, max_tokens, temperature, workspace), `agents.list` (optional array of `AgentConfig` for multi-agent; when empty, implicit "main" agent is synthesized from defaults), `providers` (api_key + api_base per provider), `channels` (enabled + credentials + allow_from per channel), `tools.web.search` (Brave API key), `gateway` (host/port, default 0.0.0.0:18790), `memory` (retention_days, search_limit, min_relevance, context_top_k, auto_save, snapshot_on_exit), `secrets` (encrypt toggle for config field encryption), `security` (prompt_guard: enabled/action/sensitivity, leak_detector: enabled/sensitivity, prompt_leak_guard: enabled/threshold/action), `heartbeat` (enabled, interval_seconds, channel), `cost` (enabled, daily_limit_usd, monthly_limit_usd, warn_at_percent, prices).
 
 Adding a config field: (1) add to struct in `pkg/config/config.go` with json + env tags, (2) update `config.example.json`, (3) update `DefaultConfig()` if non-zero default needed, (4) use in consuming code. `DefaultConfig()` flows through to `onboard` via `SaveConfig`, so no separate onboard change is needed.
+
+**Adding an AgentConfig field**: (1) add to `AgentConfig` struct in `config.go`, (2) propagate to `AgentInstance` struct in `instance.go`, (3) set it in `newAgentInstance()` factory, (4) if exposed to tools, also add to `AgentInfo` in `tools/base.go` and populate in `ListAgents()` in `loop.go`, (5) update `config.example.json`.
 
 **Adding a sensitive config field**: Also add its pointer to `sensitiveFields()` in `config.go`. This registers it for automatic encrypt-on-save and decrypt-on-load. Currently 17 fields: 8 provider API keys, 5 Feishu/Telegram/Discord tokens, 2 QQ/DingTalk secrets, 2 web tool API keys.
 
@@ -107,13 +115,17 @@ Adding a memory feature: modify `pkg/memory/` for storage logic, `pkg/tools/memo
 
 **Knowledge graph layer**: `graph.go` stores entity-relation triples (entities + relations tables) linked to memories via `memory_key` (text field, NOT a FK). `graph_schema.go` holds DDL. `memory_store` tool accepts optional `relations` parameter. `context.go` `buildGraphMemoryContext()` does entity matching + BFS walk for graph-first context injection, falling back to FTS5. **Retention cleanup chain** (in `retention.go`): delete expired memories -> `CleanStaleRelations()` (remove relations whose `memory_key` no longer exists in memories) -> `CleanOrphanedEntities()` (remove entities with zero relations). All three steps are required in order.
 
-**Memory tests**: `pkg/memory/graph_test.go`. Helper `openTestDB(t)` uses `t.TempDir()` + `t.Cleanup`. For retention tests, backdate `updated_at` via `db.db.Exec` (same-package access) since `RunRetention` skips `days <= 0` and freshly-stored entries won't be older than the cutoff.
+**Memory tests**: `pkg/memory/graph_test.go`. Helper `openTestDB(t)` uses `t.TempDir()` + `t.Cleanup`.
+
+**Context tests**: `pkg/agent/context_test.go`. Use `NewContextBuilder(t.TempDir())` for unit tests (no real workspace files needed). Tests cover the full/lightweight prompt matrix and memory gating. For retention tests, backdate `updated_at` via `db.db.Exec` (same-package access) since `RunRetention` skips `days <= 0` and freshly-stored entries won't be older than the cutoff.
 
 **Auto-save flow**: When `memory.auto_save=true`, each user message is stored in `loop.go` (step 3.5) with key `conv_{channel}_{chatID}_{millisTimestamp}` and category `conversation` (7-day retention). Only user messages are saved, not assistant responses. `memory_search` with empty query falls back to `List()` to support browsing.
 
 ## Agent Orchestrator
 
 The `delegate` tool enables an orchestrator pattern: a default agent routes tasks to specialist agents. `DelegateTool` (in `pkg/tools/delegate.go`) uses the `DelegateRunner` interface (in `base.go`) implemented by `AgentLoop`. Sync mode calls `runAgentLoop()` on the target agent's `AgentInstance` with a `delegate:{agentID}:{chatID}:{timestamp}` session key. Async mode runs in a goroutine and publishes results back via bus as system messages (same pattern as `spawn`/`subagent.go`). Access control: only agents listed in `subagents.allow_agents` can be delegated to. The `delegate` tool is only registered on agents that have this config set. `updateToolContexts()` in `loop.go` must be updated when adding new `ContextualTool` implementations.
+
+**Delegation prompt injection**: `AgentConfig.Description` flows through `AgentInstance.Description` -> `AgentInfo.Description` -> delegate tool description and system prompt. `initDelegateTools()` in `loop.go` calls `inst.ContextBuilder.SetSubagents()` to inject orchestration instructions via `buildDelegationPrompt()` in `context.go`. For the LLM to reliably delegate, each subagent must have a `description` in config.
 
 ## Go Version
 
