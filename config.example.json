@@ -12,6 +12,7 @@
       {
         "id": "main",
         "name": "Orchestrator",
+        "description": "The main agent responsible for orchestrating tasks and delegating to specialist agents",
         "default": true,
         "subagents": {
           "allow_agents": ["planner", "coder", "qa", "security"]
@@ -29,6 +30,7 @@
       {
         "id": "coder",
         "name": "Code Assistant",
+        "description": "Writes, reviews, and debugs code",
         "model": "anthropic/claude-sonnet-4",
         "provider": "anthropic",
         "workspace": "~/.picoclaw/workspace/coder",
@@ -40,6 +42,7 @@
       {
         "id": "qa",
         "name": "QA Tester",
+        "description": "Tests functionality and verifies quality",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.2,
         "max_tool_iterations": 20,
@@ -48,6 +51,7 @@
       {
         "id": "security",
         "name": "Security Reviewer",
+        "description": "Reviews code and configurations for security vulnerabilities",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.1,
         "max_tool_iterations": 15,
