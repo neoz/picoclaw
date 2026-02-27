@@ -7,6 +7,79 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 )
 
+func TestStripThinkTags(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "no tags",
+			input: "Hello world",
+			want:  "Hello world",
+		},
+		{
+			name:  "matched pair",
+			input: "<think>reasoning here</think>Hello world",
+			want:  "Hello world",
+		},
+		{
+			name:  "matched pair with whitespace",
+			input: "<think>step 1\nstep 2\n</think>\n\nHello world",
+			want:  "Hello world",
+		},
+		{
+			name:  "multiple matched pairs",
+			input: "<think>first</think>Hello <think>second</think>world",
+			want:  "Hello world",
+		},
+		{
+			name:  "orphaned close tag at start",
+			input: "</think>\n\nHello world",
+			want:  "Hello world",
+		},
+		{
+			name:  "orphaned close tag with leaked reasoning before",
+			input: "leaked reasoning</think>\n\nHello world",
+			want:  "Hello world",
+		},
+		{
+			name:  "unclosed open tag drops remainder",
+			input: "Hello <think>reasoning without close",
+			want:  "Hello",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "only think block",
+			input: "<think>all reasoning</think>",
+			want:  "",
+		},
+		{
+			name:  "only orphaned close tag",
+			input: "</think>",
+			want:  "",
+		},
+		{
+			name:  "real world deepseek pattern",
+			input: "</think>\n\nDuoi day la phan tich chi tiet ve bai tho ban chia se:",
+			want:  "Duoi day la phan tich chi tiet ve bai tho ban chia se:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stripThinkTags(tt.input)
+			if got != tt.want {
+				t.Errorf("stripThinkTags(%q)\n  got:  %q\n  want: %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 // testProviders returns a realistic provider map for testing.
 func testProviders() config.ProvidersConfig {
 	return config.ProvidersConfig{

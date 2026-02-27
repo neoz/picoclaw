@@ -235,7 +235,14 @@ func stripThinkTags(s string) string {
 		}
 		rest = rest[start+end+len(closeTag):]
 	}
-	return strings.TrimSpace(result.String())
+	// Strip orphaned </think> tags and any content before them (leaked reasoning).
+	// This happens when models split reasoning across fields, leaving the
+	// close tag (with trailing reasoning) at the start of the content field.
+	out := result.String()
+	if idx := strings.Index(out, closeTag); idx != -1 {
+		out = out[idx+len(closeTag):]
+	}
+	return strings.TrimSpace(out)
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {
