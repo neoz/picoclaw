@@ -312,9 +312,9 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 			replyText = message.ReplyToMessage.Caption
 		}
 		if replyText != "" {
-			replyFrom := message.ReplyToMessage.From.FirstName
+			replyFrom := message.ReplyToMessage.From.Username
 			if replyFrom == "" {
-				replyFrom = message.ReplyToMessage.From.Username
+				replyFrom = fmt.Sprintf("userid-%d", message.ReplyToMessage.From.ID)
 			}
 			content = fmt.Sprintf("[reply to %s: %s]\n%s", replyFrom, replyText, content)
 		}
