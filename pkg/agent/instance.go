@@ -166,7 +166,11 @@ func newAgentInstance(
 
 	// Context builder
 	contextBuilder := NewContextBuilder(workspace)
-	
+
+	if agentCfg.Instructions != "" {
+		contextBuilder.SetInstructions(agentCfg.Instructions, agentCfg.Context)
+	}
+
 	if memDB != nil {
 		contextBuilder.SetMemoryDB(memDB, memoryCfg)
 	}

@@ -94,6 +94,8 @@ type AgentConfig struct {
 	ID                string           `json:"id"`
 	Name              string           `json:"name,omitempty"`
 	Description       string           `json:"description,omitempty"`
+	Instructions      string           `json:"instructions,omitempty"`
+	Context           []string         `json:"context,omitempty"`
 	Workspace         string           `json:"workspace,omitempty"`
 	Default           bool             `json:"default,omitempty"`
 	Model             string           `json:"model,omitempty"`

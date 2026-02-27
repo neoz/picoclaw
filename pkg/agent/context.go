@@ -23,11 +23,13 @@ type SubagentInfo struct {
 }
 
 type ContextBuilder struct {
-	workspace    string
-	skillsLoader *skills.SkillsLoader
-	memoryDB     *memory.MemoryDB
-	memoryCfg    *config.MemoryConfig
-	subagents    []SubagentInfo
+	workspace       string
+	skillsLoader    *skills.SkillsLoader
+	memoryDB        *memory.MemoryDB
+	memoryCfg       *config.MemoryConfig
+	subagents       []SubagentInfo
+	instructions    string
+	contextSections map[string]bool
 }
 
 func getGlobalConfigDir() string {
@@ -61,6 +63,50 @@ func (cb *ContextBuilder) SetMemoryDB(db *memory.MemoryDB, cfg *config.MemoryCon
 // SetSubagents configures the list of delegatable agents for system prompt injection.
 func (cb *ContextBuilder) SetSubagents(agents []SubagentInfo) {
 	cb.subagents = agents
+}
+
+// SetInstructions configures a lightweight per-agent prompt.
+// When set, BuildSystemPrompt uses instructions instead of the full prompt,
+// only including sections listed in the context array.
+// Available sections: "identity", "bootstrap", "safety", "skills", "memory".
+func (cb *ContextBuilder) SetInstructions(instructions string, sections []string) {
+	cb.instructions = instructions
+	cb.contextSections = make(map[string]bool, len(sections))
+	for _, s := range sections {
+		cb.contextSections[s] = true
+	}
+}
+
+// buildInstructionsPrompt builds a lightweight system prompt from instructions + opted-in sections.
+func (cb *ContextBuilder) buildInstructionsPrompt() string {
+	parts := []string{cb.instructions}
+
+	if cb.contextSections["identity"] {
+		parts = append(parts, cb.getIdentity())
+	}
+
+	if cb.contextSections["bootstrap"] {
+		if content := cb.LoadBootstrapFiles(); content != "" {
+			parts = append(parts, content)
+		}
+	}
+
+	if cb.contextSections["safety"] {
+		parts = append(parts, cb.BuildSafety())
+	}
+
+	if cb.contextSections["skills"] {
+		if summary := cb.skillsLoader.BuildSkillsSummary(); summary != "" {
+			parts = append(parts, fmt.Sprintf("# Skills\n\nThe following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.\n\n%s", summary))
+		}
+	}
+
+	// Delegation section always included when agent has subagents
+	if len(cb.subagents) > 0 {
+		parts = append(parts, cb.buildDelegationPrompt())
+	}
+
+	return strings.Join(parts, "\n\n---\n\n")
 }
 
 func (cb *ContextBuilder) getIdentity() string {
@@ -106,6 +152,10 @@ func (cb *ContextBuilder) BuildSafety() string {
 }
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
+	if cb.instructions != "" {
+		return cb.buildInstructionsPrompt()
+	}
+
 	parts := []string{}
 
 	// Core identity section
@@ -370,10 +420,12 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 
 	systemPrompt := cb.BuildSystemPrompt()
 
-	// Append relevance-filtered memory context
-	memoryContext := cb.buildRelevantMemoryContext(currentMessage)
-	if memoryContext != "" {
-		systemPrompt += "\n\n---\n\n" + memoryContext
+	// Append relevance-filtered memory context (full prompt always, lightweight only if "memory" opted in)
+	if cb.instructions == "" || cb.contextSections["memory"] {
+		memoryContext := cb.buildRelevantMemoryContext(currentMessage)
+		if memoryContext != "" {
+			systemPrompt += "\n\n---\n\n" + memoryContext
+		}
 	}
 
 	// Add Current Session info if provided
