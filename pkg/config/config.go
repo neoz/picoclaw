@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/caarlos0/env/v11"
@@ -180,21 +181,92 @@ type DingTalkConfig struct {
 	AllowFrom        []string `json:"allow_from" env:"PICOCLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
 }
 
-type ProvidersConfig struct {
-	Anthropic  ProviderConfig `json:"anthropic"`
-	OpenAI     ProviderConfig `json:"openai"`
-	OpenRouter ProviderConfig `json:"openrouter"`
-	Groq       ProviderConfig `json:"groq"`
-	Zhipu      ProviderConfig `json:"zhipu"`
-	VLLM       ProviderConfig `json:"vllm"`
-	Gemini     ProviderConfig `json:"gemini"`
-	Nvidia     ProviderConfig `json:"nvidia"`
-}
+// ProvidersConfig is a map of provider name to its configuration.
+// New providers can be added purely through config.json.
+type ProvidersConfig map[string]*ProviderConfig
 
 type ProviderConfig struct {
-	APIKey    string `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase   string `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	UserAgent string `json:"user_agent,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_USER_AGENT"`
+	APIKey        string   `json:"api_key"`
+	APIBase       string   `json:"api_base"`
+	UserAgent     string   `json:"user_agent,omitempty"`
+	ModelPatterns []string `json:"model_patterns,omitempty"`
+	Fallback      bool     `json:"fallback,omitempty"`
+}
+
+// builtinProviderDefaults defines default API base URLs and model patterns
+// for known providers. These are merged into user config at load time.
+var builtinProviderDefaults = map[string]ProviderConfig{
+	"anthropic": {
+		APIBase:       "https://api.anthropic.com/v1",
+		ModelPatterns: []string{"anthropic/", "claude"},
+	},
+	"openai": {
+		APIBase:       "https://api.openai.com/v1",
+		ModelPatterns: []string{"openai/", "gpt"},
+	},
+	"openrouter": {
+		APIBase:       "https://openrouter.ai/api/v1",
+		ModelPatterns: []string{"openrouter/", "meta-llama/", "deepseek/", "google/"},
+		Fallback:      true,
+	},
+	"groq": {
+		APIBase:       "https://api.groq.com/openai/v1",
+		ModelPatterns: []string{"groq/", "groq"},
+	},
+	"zhipu": {
+		APIBase:       "https://open.bigmodel.cn/api/paas/v4",
+		ModelPatterns: []string{"glm", "zhipu", "zai"},
+	},
+	"vllm": {
+		ModelPatterns: []string{},
+	},
+	"gemini": {
+		APIBase:       "https://generativelanguage.googleapis.com/v1beta",
+		ModelPatterns: []string{"gemini"},
+	},
+	"nvidia": {
+		APIBase:       "https://integrate.api.nvidia.com/v1",
+		ModelPatterns: []string{"nvidia/"},
+	},
+}
+
+// mergeProviderDefaults fills in missing APIBase and ModelPatterns from
+// builtinProviderDefaults for known providers. Unknown providers are left as-is.
+func mergeProviderDefaults(providers ProvidersConfig) {
+	for name, defaults := range builtinProviderDefaults {
+		p, exists := providers[name]
+		if !exists {
+			continue
+		}
+		if p.APIBase == "" && defaults.APIBase != "" {
+			p.APIBase = defaults.APIBase
+		}
+		if len(p.ModelPatterns) == 0 && len(defaults.ModelPatterns) > 0 {
+			p.ModelPatterns = defaults.ModelPatterns
+		}
+		if defaults.Fallback && !p.Fallback {
+			p.Fallback = defaults.Fallback
+		}
+	}
+}
+
+// GetProviderConfig returns the ProviderConfig for a given provider name, or nil.
+func (c *Config) GetProviderConfig(name string) *ProviderConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Providers[name]
+}
+
+// ProviderNames returns sorted provider names.
+func (c *Config) ProviderNames() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	names := make([]string, 0, len(c.Providers))
+	for name := range c.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 type GatewayConfig struct {
@@ -277,14 +349,14 @@ func DefaultConfig() *Config {
 			},
 		},
 		Providers: ProvidersConfig{
-			Anthropic:  ProviderConfig{},
-			OpenAI:     ProviderConfig{},
-			OpenRouter: ProviderConfig{},
-			Groq:       ProviderConfig{},
-			Zhipu:      ProviderConfig{},
-			VLLM:       ProviderConfig{},
-			Gemini:     ProviderConfig{},
-			Nvidia:     ProviderConfig{},
+			"anthropic":  &ProviderConfig{},
+			"openai":     &ProviderConfig{},
+			"openrouter": &ProviderConfig{},
+			"groq":       &ProviderConfig{},
+			"zhipu":      &ProviderConfig{},
+			"vllm":       &ProviderConfig{},
+			"gemini":     &ProviderConfig{},
+			"nvidia":     &ProviderConfig{},
 		},
 		Gateway: GatewayConfig{
 			Host: "0.0.0.0",
@@ -348,16 +420,9 @@ func DefaultConfig() *Config {
 }
 
 // sensitiveFields returns pointers to all sensitive string fields in the config.
+// Provider API keys are collected dynamically from the providers map.
 func sensitiveFields(cfg *Config) []*string {
-	return []*string{
-		&cfg.Providers.Anthropic.APIKey,
-		&cfg.Providers.OpenAI.APIKey,
-		&cfg.Providers.OpenRouter.APIKey,
-		&cfg.Providers.Groq.APIKey,
-		&cfg.Providers.Zhipu.APIKey,
-		&cfg.Providers.VLLM.APIKey,
-		&cfg.Providers.Gemini.APIKey,
-		&cfg.Providers.Nvidia.APIKey,
+	fields := []*string{
 		&cfg.Channels.Telegram.Token,
 		&cfg.Channels.Discord.Token,
 		&cfg.Channels.Feishu.AppSecret,
@@ -368,6 +433,16 @@ func sensitiveFields(cfg *Config) []*string {
 		&cfg.Tools.Web.Search.APIKey,
 		&cfg.Tools.Web.Ollama.APIKey,
 	}
+	// Collect provider API keys in sorted order for deterministic encryption
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fields = append(fields, &cfg.Providers[name].APIKey)
+	}
+	return fields
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -385,6 +460,14 @@ func LoadConfig(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+
+	// Ensure providers map is initialized (in case JSON had no providers section)
+	if cfg.Providers == nil {
+		cfg.Providers = make(ProvidersConfig)
+	}
+
+	// Fill in builtin defaults for known providers
+	mergeProviderDefaults(cfg.Providers)
 
 	// Check for encrypted and unencrypted sensitive fields
 	hasEncrypted := false
@@ -482,54 +565,6 @@ func (c *Config) WorkspacePath() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return expandHome(c.Agents.Defaults.Workspace)
-}
-
-func (c *Config) GetAPIKey() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.Providers.OpenRouter.APIKey != "" {
-		return c.Providers.OpenRouter.APIKey
-	}
-	if c.Providers.Anthropic.APIKey != "" {
-		return c.Providers.Anthropic.APIKey
-	}
-	if c.Providers.OpenAI.APIKey != "" {
-		return c.Providers.OpenAI.APIKey
-	}
-	if c.Providers.Gemini.APIKey != "" {
-		return c.Providers.Gemini.APIKey
-	}
-	if c.Providers.Zhipu.APIKey != "" {
-		return c.Providers.Zhipu.APIKey
-	}
-	if c.Providers.Groq.APIKey != "" {
-		return c.Providers.Groq.APIKey
-	}
-	if c.Providers.Nvidia.APIKey != "" {
-		return c.Providers.Nvidia.APIKey
-	}
-	if c.Providers.VLLM.APIKey != "" {
-		return c.Providers.VLLM.APIKey
-	}
-	return ""
-}
-
-func (c *Config) GetAPIBase() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.Providers.OpenRouter.APIKey != "" {
-		if c.Providers.OpenRouter.APIBase != "" {
-			return c.Providers.OpenRouter.APIBase
-		}
-		return "https://openrouter.ai/api/v1"
-	}
-	if c.Providers.Zhipu.APIKey != "" {
-		return c.Providers.Zhipu.APIBase
-	}
-	if c.Providers.VLLM.APIKey != "" && c.Providers.VLLM.APIBase != "" {
-		return c.Providers.VLLM.APIBase
-	}
-	return ""
 }
 
 // GetChannelAllowFrom returns the allow_from list for a given channel name.

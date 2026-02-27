@@ -113,43 +113,41 @@
   "providers": {
     "anthropic": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["anthropic/", "claude"]
     },
     "openai": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["openai/", "gpt"]
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["openrouter/", "meta-llama/", "deepseek/", "google/"],
+      "fallback": true
     },
     "groq": {
       "api_key": "gsk_xxx",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["groq/", "groq"]
     },
     "zhipu": {
       "api_key": "YOUR_ZHIPU_API_KEY",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["glm", "zhipu", "zai"]
     },
     "gemini": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["gemini"]
     },
     "vllm": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "api_base": ""
     },
     "nvidia": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["nvidia/"]
+    },
+    "kimi": {
+      "api_key": "",
+      "api_base": "https://api.moonshot.cn/v1",
+      "model_patterns": ["kimi", "moonshot"]
     }
   },
   "tools": {
