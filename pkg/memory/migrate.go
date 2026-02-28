@@ -168,6 +168,34 @@ func (m *MemoryDB) migrateAddOwner() error {
 	return tx.Commit()
 }
 
+// migrateDeduplicateKeys removes duplicate entries where the same key exists
+// with different owners. Keeps the most recently updated entry for each key.
+func (m *MemoryDB) migrateDeduplicateKeys() error {
+	var migrated string
+	err := m.db.QueryRow("SELECT value FROM metadata WHERE key = 'deduplicated_keys'").Scan(&migrated)
+	if err == nil && migrated == "true" {
+		return nil
+	}
+
+	// Delete all but the most recently updated entry for each key
+	_, err = m.db.Exec(`
+		DELETE FROM memories WHERE id NOT IN (
+			SELECT id FROM (
+				SELECT id, ROW_NUMBER() OVER (PARTITION BY key ORDER BY updated_at DESC) AS rn
+				FROM memories
+			) WHERE rn = 1
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("deduplicate keys: %w", err)
+	}
+
+	_, err = m.db.Exec(
+		"INSERT OR REPLACE INTO metadata (key, value) VALUES ('deduplicated_keys', 'true')",
+	)
+	return err
+}
+
 // splitParagraphs splits content by double newline into non-empty paragraphs.
 func splitParagraphs(content string) []string {
 	parts := strings.Split(content, "\n\n")

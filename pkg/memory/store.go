@@ -6,18 +6,20 @@ import (
 	"time"
 )
 
-// Store inserts or updates a memory entry (upsert on key+owner).
+// Store inserts or updates a memory entry. The key is globally unique:
+// any existing entry with the same key (regardless of owner) is replaced.
 func (m *MemoryDB) Store(key, content, category, owner string) error {
 	category = validateCategory(category)
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
+	// Delete any existing entries with this key (all owners) to prevent
+	// duplicates from the UNIQUE(key, owner) constraint allowing
+	// ("key", "") and ("key", "alice") to coexist.
+	_, _ = m.db.Exec("DELETE FROM memories WHERE key = ?", key)
+
 	_, err := m.db.Exec(`
 		INSERT INTO memories (key, content, category, owner, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(key, owner) DO UPDATE SET
-			content = excluded.content,
-			category = excluded.category,
-			updated_at = excluded.updated_at
 	`, key, content, category, owner, now, now)
 	if err != nil {
 		return fmt.Errorf("store memory: %w", err)
