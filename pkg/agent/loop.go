@@ -220,9 +220,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			// Resolve agent for this message
 			inst := al.resolveAgent(msg)
 
-			senderName := msg.Metadata["first_name"]
-			if uname := msg.Metadata["username"]; uname != "" {
-				senderName = uname
+			senderName := msg.Metadata["username"]
+			if senderName == "" {
+				senderName = msg.Metadata["user_id"]
 			}
 			inst.Sessions.AddToLog(msg.SessionKey, msg.Content, msg.SenderID, senderName)
 
