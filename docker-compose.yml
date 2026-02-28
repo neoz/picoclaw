@@ -11,6 +11,7 @@ services:
       - ./config${ENVIRONMENT:+.${ENVIRONMENT}}.json:/home/picoclaw/.picoclaw/config.json
       - ./.secret_key:/home/picoclaw/.picoclaw/.secret_key
       - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
+    command: ["gateway", "--debug"] # for development, use --debug for hot reload; for production, remove --debug
     environment:
       - TZ=Asia/Ho_Chi_Minh
       # Override config via env vars (optional):
