@@ -24,6 +24,7 @@ for arg in "$@"; do
         skills-list) ACTION="skills-list" ;;
         skills-import) ACTION="skills-import" ;;
         skills-export) ACTION="skills-export" ;;
+        memory-export) ACTION="memory-export" ;;
     esac
 done
 
@@ -44,12 +45,16 @@ if [ "$ACTION" = "help" ]; then
     echo "  skills-export         Export skills from container to ./skills-export/"
     echo "  skills-import <dir>   Import local skill folder(s) into the container"
     echo ""
+    echo "Data commands:"
+    echo "  memory-export         Export memory database from container to ./memory-export/"
+    echo ""
     echo "Examples:"
     echo "  ./run.sh                          Run the container"
     echo "  ./run.sh --build                  Rebuild and run"
     echo "  ./run.sh --restart --build        Rebuild and restart"
     echo "  ./run.sh skills-list              List installed skills"
     echo "  ./run.sh skills-import ./weather  Import a skill"
+    echo "  ./run.sh memory-export            Export memory DB"
     exit 0
 fi
 
@@ -112,6 +117,22 @@ if [ "$ACTION" = "skills-import" ]; then
         docker exec "$CONTAINER_NAME" chown -R picoclaw:picoclaw "$SKILLS_DIR/$name"
         echo "Imported skill: $name"
     done
+    exit 0
+fi
+
+# memory-export: copy memory folder from container to local ./memory-export/
+if [ "$ACTION" = "memory-export" ]; then
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "Container '$CONTAINER_NAME' is not running."
+        exit 1
+    fi
+    EXPORT_DIR="$SCRIPT_DIR/memory-export"
+    rm -rf "$EXPORT_DIR"
+    mkdir -p "$EXPORT_DIR"
+    MEMORY_DIR="/home/picoclaw/.picoclaw/workspace/memory"
+    docker cp "$CONTAINER_NAME:$MEMORY_DIR/." "$EXPORT_DIR/"
+    echo "Exported memory to $EXPORT_DIR"
+    ls -lh "$EXPORT_DIR"
     exit 0
 fi
 
