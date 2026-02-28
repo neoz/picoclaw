@@ -36,6 +36,8 @@ func (t *MemoryStoreTool) Description() string {
 - "custom": auto-deleted after 90 days
 If the key already exists, the content is updated.
 
+By default, memories are owned by the current user. Set shared=true to store as shared memory visible to all users (e.g. general knowledge, project facts, shared preferences). Use shared memory for information that is not specific to any single user.
+
 When storing facts involving entities (people, projects, places, concepts), include relations to build a knowledge graph for better context retrieval.
 Example: key="team_alice", content="Alice joined PicoClaw team", relations=[{"source":"Alice", "relation":"works_on", "target":"PicoClaw"}]`
 }
@@ -56,6 +58,10 @@ func (t *MemoryStoreTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Memory category: core (permanent), daily (30d), conversation (7d), custom (90d). Default: core",
 				"enum":        []string{"core", "daily", "conversation", "custom"},
+			},
+			"shared": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set to true to store as shared memory (visible to all users). Default: false (owned by current user).",
 			},
 			"relations": map[string]interface{}{
 				"type":        "array",
@@ -93,6 +99,11 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args map[string]interface
 	t.mu.Lock()
 	owner := t.owner
 	t.mu.Unlock()
+
+	// Allow agent to store shared memory (owner="") when shared=true
+	if shared, ok := args["shared"].(bool); ok && shared {
+		owner = ""
+	}
 
 	// Clear stale relations before upsert (handles key update case)
 	if relations, ok := args["relations"].([]interface{}); ok && len(relations) > 0 {
