@@ -6,19 +6,19 @@ import (
 	"time"
 )
 
-// Store inserts or updates a memory entry (upsert on key).
-func (m *MemoryDB) Store(key, content, category string) error {
+// Store inserts or updates a memory entry (upsert on key+owner).
+func (m *MemoryDB) Store(key, content, category, owner string) error {
 	category = validateCategory(category)
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	_, err := m.db.Exec(`
-		INSERT INTO memories (key, content, category, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET
+		INSERT INTO memories (key, content, category, owner, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(key, owner) DO UPDATE SET
 			content = excluded.content,
 			category = excluded.category,
 			updated_at = excluded.updated_at
-	`, key, content, category, now, now)
+	`, key, content, category, owner, now, now)
 	if err != nil {
 		return fmt.Errorf("store memory: %w", err)
 	}
@@ -28,13 +28,13 @@ func (m *MemoryDB) Store(key, content, category string) error {
 // Get retrieves a memory entry by key. Returns nil if not found.
 func (m *MemoryDB) Get(key string) *MemoryEntry {
 	row := m.db.QueryRow(`
-		SELECT id, key, content, category, created_at, updated_at
+		SELECT id, key, content, category, owner, created_at, updated_at
 		FROM memories WHERE key = ?
 	`, key)
 
 	var entry MemoryEntry
 	var createdAt, updatedAt string
-	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt)
+	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt)
 	if err != nil {
 		return nil
 	}
@@ -54,23 +54,30 @@ func (m *MemoryDB) Delete(key string) bool {
 }
 
 // List returns memory entries filtered by category, ordered by updated_at DESC.
-// Pass empty category to list all.
-func (m *MemoryDB) List(category string, limit int) ([]MemoryEntry, error) {
+// Pass empty category to list all. When owner is non-empty, returns shared (owner='')
+// plus that owner's entries. Pass owner="" to return all entries (no filter).
+func (m *MemoryDB) List(category string, limit int, owner string) ([]MemoryEntry, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
-	var query string
+	var conditions []string
 	var args []interface{}
 	if category != "" {
-		query = `SELECT id, key, content, category, created_at, updated_at
-			FROM memories WHERE category = ? ORDER BY updated_at DESC LIMIT ?`
-		args = []interface{}{category, limit}
-	} else {
-		query = `SELECT id, key, content, category, created_at, updated_at
-			FROM memories ORDER BY updated_at DESC LIMIT ?`
-		args = []interface{}{limit}
+		conditions = append(conditions, "category = ?")
+		args = append(args, category)
 	}
+	if owner != "" {
+		conditions = append(conditions, "(owner = '' OR owner = ?)")
+		args = append(args, owner)
+	}
+
+	query := "SELECT id, key, content, category, owner, created_at, updated_at FROM memories"
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	query += " ORDER BY updated_at DESC LIMIT ?"
+	args = append(args, limit)
 
 	rows, err := m.db.Query(query, args...)
 	if err != nil {
@@ -82,7 +89,7 @@ func (m *MemoryDB) List(category string, limit int) ([]MemoryEntry, error) {
 	for rows.Next() {
 		var entry MemoryEntry
 		var createdAt, updatedAt string
-		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
@@ -93,7 +100,8 @@ func (m *MemoryDB) List(category string, limit int) ([]MemoryEntry, error) {
 }
 
 // ListRecent returns entries from the given categories updated within the last N days.
-func (m *MemoryDB) ListRecent(categories []string, days, limit int) ([]MemoryEntry, error) {
+// When owner is non-empty, returns shared + that owner's entries.
+func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string) ([]MemoryEntry, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -105,18 +113,25 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int) ([]MemoryEnt
 
 	// Build placeholders for IN clause
 	placeholders := make([]string, len(categories))
-	args := make([]interface{}, 0, len(categories)+2)
+	args := make([]interface{}, 0, len(categories)+4)
 	for i, c := range categories {
 		placeholders[i] = "?"
 		args = append(args, c)
 	}
-	args = append(args, cutoff, limit)
+	args = append(args, cutoff)
 
-	query := fmt.Sprintf(`SELECT id, key, content, category, created_at, updated_at
+	ownerClause := ""
+	if owner != "" {
+		ownerClause = " AND (owner = '' OR owner = ?)"
+		args = append(args, owner)
+	}
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`SELECT id, key, content, category, owner, created_at, updated_at
 		FROM memories
-		WHERE category IN (%s) AND updated_at >= ?
+		WHERE category IN (%s) AND updated_at >= ?%s
 		ORDER BY updated_at DESC LIMIT ?`,
-		strings.Join(placeholders, ","))
+		strings.Join(placeholders, ","), ownerClause)
 
 	rows, err := m.db.Query(query, args...)
 	if err != nil {
@@ -128,7 +143,7 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int) ([]MemoryEnt
 	for rows.Next() {
 		var entry MemoryEntry
 		var createdAt, updatedAt string
-		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)

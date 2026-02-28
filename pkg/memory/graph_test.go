@@ -486,7 +486,7 @@ func TestRetentionCleansOrphans(t *testing.T) {
 	db := openTestDB(t)
 
 	// Store a memory with relations
-	db.Store("temp_fact", "Alice is here", "conversation")
+	db.Store("temp_fact", "Alice is here", "conversation", "")
 	db.AddRelation("Alice", "mentioned_in", "TempChat", "temp_fact")
 
 	// Backdate the memory so retention will pick it up (older than 1 day)

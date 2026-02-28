@@ -16,6 +16,7 @@ type MemoryEntry struct {
 	Key       string
 	Content   string
 	Category  string
+	Owner     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -66,6 +67,11 @@ func Open(workspace string) (*MemoryDB, error) {
 		dbPath:    dbPath,
 	}
 
+	if err := mdb.migrateAddOwner(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate owner column: %w", err)
+	}
+
 	if err := mdb.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -101,12 +107,16 @@ func (m *MemoryDB) createSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS memories (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		key        TEXT UNIQUE NOT NULL,
+		key        TEXT NOT NULL,
 		content    TEXT NOT NULL,
 		category   TEXT NOT NULL DEFAULT 'core',
+		owner      TEXT NOT NULL DEFAULT '',
 		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		UNIQUE(key, owner)
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_memories_owner ON memories(owner);
 
 	CREATE TABLE IF NOT EXISTS metadata (
 		key   TEXT PRIMARY KEY,

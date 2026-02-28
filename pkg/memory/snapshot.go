@@ -8,7 +8,7 @@ import (
 
 // ExportSnapshot writes all core memories to a readable markdown file.
 func (m *MemoryDB) ExportSnapshot(path string) error {
-	entries, err := m.List("core", 1000)
+	entries, err := m.List("core", 1000, "")
 	if err != nil {
 		return fmt.Errorf("list core memories: %w", err)
 	}
@@ -71,7 +71,7 @@ func (m *MemoryDB) ImportSnapshot(path string) error {
 		}
 
 		if body != "" {
-			if err := m.Store(key, body, "core"); err != nil {
+			if err := m.Store(key, body, "core", ""); err != nil {
 				return fmt.Errorf("import entry %q: %w", key, err)
 			}
 		}

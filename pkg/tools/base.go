@@ -16,6 +16,13 @@ type ContextualTool interface {
 	SetContext(channel, chatID string)
 }
 
+// OwnerAwareTool is an optional interface that tools can implement
+// to receive the current memory owner (username) for scoped access.
+type OwnerAwareTool interface {
+	Tool
+	SetOwner(owner string)
+}
+
 // DelegateRunner is the interface that the agent loop implements to allow
 // the delegate tool to invoke other agents without circular imports.
 type DelegateRunner interface {

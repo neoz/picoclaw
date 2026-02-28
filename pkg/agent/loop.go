@@ -52,6 +52,7 @@ type processOptions struct {
 	EnableSummary   bool              // Whether to trigger summarization
 	SendResponse    bool              // Whether to send response via bus
 	Metadata        map[string]string // Original inbound message metadata
+	Owner           string            // Memory owner (username for scoped access)
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error) {
@@ -376,6 +377,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		EnableSummary:   true,
 		SendResponse:    false,
 		Metadata:        msg.Metadata,
+		Owner:           resolveOwner(msg.Metadata),
 	})
 }
 
@@ -425,6 +427,18 @@ func getSenderDisplayName(meta map[string]string) string {
 	return ""
 }
 
+// resolveOwner extracts the memory owner from message metadata.
+// Prefers username, then user_id, falls back to "" (shared).
+func resolveOwner(meta map[string]string) string {
+	if name := meta["username"]; name != "" {
+		return name
+	}
+	if uid := meta["user_id"]; uid != "" {
+		return uid
+	}
+	return ""
+}
+
 func (al *AgentLoop) processSystemMessage(ctx context.Context, inst *AgentInstance, msg bus.InboundMessage) (string, error) {
 	// Verify this is a system message
 	if msg.Channel != "system" {
@@ -467,7 +481,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, inst *AgentInstan
 // It handles context building, LLM calls, tool execution, and response handling.
 func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts processOptions) (string, error) {
 	// 1. Update tool contexts
-	al.updateToolContexts(inst, opts.Channel, opts.ChatID)
+	al.updateToolContexts(inst, opts.Channel, opts.ChatID, opts.Owner)
 
 	// 2. Build messages
 	history := inst.Sessions.GetHistory(opts.SessionKey)
@@ -479,6 +493,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		nil,
 		opts.Channel,
 		opts.ChatID,
+		opts.Owner,
 	)
 
 	// 3. Save user message to session
@@ -768,7 +783,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 }
 
 // updateToolContexts updates the context for tools that need channel/chatID info.
-func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID string) {
+func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID, owner string) {
 	if tool, ok := inst.Tools.Get("message"); ok {
 		if mt, ok := tool.(*tools.MessageTool); ok {
 			mt.SetContext(channel, chatID)
@@ -787,6 +802,14 @@ func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID str
 	if tool, ok := inst.Tools.Get("delegate"); ok {
 		if dt, ok := tool.(*tools.DelegateTool); ok {
 			dt.SetContext(channel, chatID)
+		}
+	}
+	// Set owner on memory tools for scoped access
+	for _, name := range []string{"memory_store", "memory_search", "memory_forget"} {
+		if tool, ok := inst.Tools.Get(name); ok {
+			if ot, ok := tool.(tools.OwnerAwareTool); ok {
+				ot.SetOwner(owner)
+			}
 		}
 	}
 }

@@ -226,7 +226,8 @@ func (cb *ContextBuilder) buildDelegationPrompt() string {
 }
 
 // buildRelevantMemoryContext returns memory context relevant to the user message.
-func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string {
+// When owner is non-empty, only shared + that owner's memories are returned.
+func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) string {
 	if cb.memoryDB == nil {
 		return ""
 	}
@@ -246,7 +247,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 	var parts []string
 
 	// 1. Core memories (permanent, always included)
-	coreEntries, _ := cb.memoryDB.List("core", 20)
+	coreEntries, _ := cb.memoryDB.List("core", 20, owner)
 	if len(coreEntries) > 0 {
 		var sb strings.Builder
 		sb.WriteString("## Core Memories\n\n")
@@ -258,7 +259,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 	}
 
 	// 2. Daily notes (recent, always included for temporal awareness)
-	dailyEntries, _ := cb.memoryDB.List("daily", 10)
+	dailyEntries, _ := cb.memoryDB.List("daily", 10, owner)
 	if len(dailyEntries) > 0 {
 		var sb strings.Builder
 		sb.WriteString("## Daily Notes\n\n")
@@ -270,7 +271,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 	}
 
 	// 3. Recent memories (daily+custom from last 3 days, ensures temporal context)
-	recentEntries, _ := cb.memoryDB.ListRecent([]string{"daily", "custom"}, 3, 5)
+	recentEntries, _ := cb.memoryDB.ListRecent([]string{"daily", "custom"}, 3, 5, owner)
 	if len(recentEntries) > 0 {
 		var sb strings.Builder
 		sb.WriteString("## Recent Memories\n\n")
@@ -290,7 +291,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 
 	// 4. Graph walk - find entities mentioned in the message, walk relations
 	if userMessage != "" {
-		graphMemories := cb.buildGraphMemoryContext(userMessage, seenKeys)
+		graphMemories := cb.buildGraphMemoryContext(userMessage, owner, seenKeys)
 		if graphMemories != "" {
 			parts = append(parts, graphMemories)
 		}
@@ -298,7 +299,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 
 	// 5. FTS5 search for relevant memories (exclude conversation noise, dedupe with graph)
 	if userMessage != "" {
-		results, err := cb.memoryDB.Search(userMessage, topK)
+		results, err := cb.memoryDB.Search(userMessage, topK, owner)
 		if err == nil && len(results) > 0 {
 			var sb strings.Builder
 			sb.WriteString("## Relevant Memories\n\n")
@@ -333,7 +334,8 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage string) string 
 
 // buildGraphMemoryContext walks the knowledge graph for entities found in the message.
 // It returns a formatted section of graph-related memories, updating seenKeys to prevent duplicates.
-func (cb *ContextBuilder) buildGraphMemoryContext(userMessage string, seenKeys map[string]bool) string {
+// When owner is non-empty, only shared + that owner's memories are included.
+func (cb *ContextBuilder) buildGraphMemoryContext(userMessage, owner string, seenKeys map[string]bool) string {
 	if cb.memoryDB == nil {
 		return ""
 	}
@@ -394,6 +396,10 @@ func (cb *ContextBuilder) buildGraphMemoryContext(userMessage string, seenKeys m
 		if entry.Category == "conversation" {
 			continue
 		}
+		// Filter by owner: skip entries owned by other users
+		if owner != "" && entry.Owner != "" && entry.Owner != owner {
+			continue
+		}
 		seenKeys[key] = true
 		sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", entry.Key, entry.Category, entry.Content))
 		added++
@@ -413,14 +419,14 @@ func (cb *ContextBuilder) buildGraphMemoryContext(userMessage string, seenKeys m
 	return sb.String()
 }
 
-func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID string) []providers.Message {
+func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID, owner string) []providers.Message {
 	messages := []providers.Message{}
 
 	systemPrompt := cb.BuildSystemPrompt()
 
 	// Append relevance-filtered memory context (full prompt always, lightweight only if "memory" opted in)
 	if cb.instructions == "" || cb.contextSections["memory"] {
-		memoryContext := cb.buildRelevantMemoryContext(currentMessage)
+		memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner)
 		if memoryContext != "" {
 			systemPrompt += "\n\n---\n\n" + memoryContext
 		}

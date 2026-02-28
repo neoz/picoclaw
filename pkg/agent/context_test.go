@@ -119,7 +119,7 @@ func TestBuildSystemPrompt_DelegationOmittedWhenNoSubagents(t *testing.T) {
 func TestBuildMessages_MemoryGating_NoInstructions(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	// No instructions = full prompt; memory context should be attempted (no DB, so no crash)
-	msgs := cb.BuildMessages(nil, "", "hello", nil, "test", "123")
+	msgs := cb.BuildMessages(nil, "", "hello", nil, "test", "123", "")
 
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages (system + user), got %d", len(msgs))
@@ -135,7 +135,7 @@ func TestBuildMessages_MemoryGating_NoInstructions(t *testing.T) {
 func TestBuildMessages_MemoryGating_InstructionsWithoutMemory(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a poet.", []string{"safety"})
-	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123")
+	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "")
 
 	system := msgs[0].Content
 	// Should contain instructions and safety, but no memory header
@@ -151,7 +151,7 @@ func TestBuildMessages_MemoryGating_InstructionsWithMemory(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a poet.", []string{"memory"})
 	// No actual memoryDB set, so no memory content - but the code path should be entered without panic
-	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123")
+	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "")
 
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
@@ -164,7 +164,7 @@ func TestBuildMessages_MemoryGating_InstructionsWithMemory(t *testing.T) {
 func TestBuildMessages_SessionInfo(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a bot.", nil)
-	msgs := cb.BuildMessages(nil, "", "hi", nil, "telegram", "42")
+	msgs := cb.BuildMessages(nil, "", "hi", nil, "telegram", "42", "")
 
 	system := msgs[0].Content
 	if !strings.Contains(system, "Channel: telegram") {
@@ -178,7 +178,7 @@ func TestBuildMessages_SessionInfo(t *testing.T) {
 func TestBuildMessages_SummaryAppended(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a bot.", nil)
-	msgs := cb.BuildMessages(nil, "Previous discussion about weather.", "hi", nil, "", "")
+	msgs := cb.BuildMessages(nil, "Previous discussion about weather.", "hi", nil, "", "", "")
 
 	system := msgs[0].Content
 	if !strings.Contains(system, "Summary of Previous Conversation") {

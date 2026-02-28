@@ -3,16 +3,25 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemoryForgetTool struct {
-	db *memory.MemoryDB
+	db    *memory.MemoryDB
+	owner string
+	mu    sync.Mutex
 }
 
 func NewMemoryForgetTool(db *memory.MemoryDB) *MemoryForgetTool {
 	return &MemoryForgetTool{db: db}
+}
+
+func (t *MemoryForgetTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
 }
 
 func (t *MemoryForgetTool) Name() string {
@@ -40,6 +49,18 @@ func (t *MemoryForgetTool) Execute(ctx context.Context, args map[string]interfac
 	key, _ := args["key"].(string)
 	if key == "" {
 		return "Error: 'key' parameter is required.", nil
+	}
+
+	t.mu.Lock()
+	owner := t.owner
+	t.mu.Unlock()
+
+	// Check ownership before deleting
+	if owner != "" {
+		entry := t.db.Get(key)
+		if entry != nil && entry.Owner != "" && entry.Owner != owner {
+			return fmt.Sprintf("Error: cannot delete memory owned by another user: key=%q", key), nil
+		}
 	}
 
 	if t.db.Delete(key) {

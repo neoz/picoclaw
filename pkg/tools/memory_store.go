@@ -3,16 +3,25 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemoryStoreTool struct {
-	db *memory.MemoryDB
+	db    *memory.MemoryDB
+	owner string
+	mu    sync.Mutex
 }
 
 func NewMemoryStoreTool(db *memory.MemoryDB) *MemoryStoreTool {
 	return &MemoryStoreTool{db: db}
+}
+
+func (t *MemoryStoreTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
 }
 
 func (t *MemoryStoreTool) Name() string {
@@ -81,12 +90,16 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args map[string]interface
 		category = c
 	}
 
+	t.mu.Lock()
+	owner := t.owner
+	t.mu.Unlock()
+
 	// Clear stale relations before upsert (handles key update case)
 	if relations, ok := args["relations"].([]interface{}); ok && len(relations) > 0 {
 		_ = t.db.RemoveRelationsByMemoryKey(key)
 	}
 
-	if err := t.db.Store(key, content, category); err != nil {
+	if err := t.db.Store(key, content, category, owner); err != nil {
 		return fmt.Sprintf("Error storing memory: %v", err), nil
 	}
 

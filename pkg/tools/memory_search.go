@@ -4,16 +4,25 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemorySearchTool struct {
-	db *memory.MemoryDB
+	db    *memory.MemoryDB
+	owner string
+	mu    sync.Mutex
 }
 
 func NewMemorySearchTool(db *memory.MemoryDB) *MemorySearchTool {
 	return &MemorySearchTool{db: db}
+}
+
+func (t *MemorySearchTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
 }
 
 func (t *MemorySearchTool) Name() string {
@@ -56,9 +65,13 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 
 	category, _ := args["category"].(string)
 
+	t.mu.Lock()
+	owner := t.owner
+	t.mu.Unlock()
+
 	// Empty query: fall back to listing recent entries
 	if strings.TrimSpace(query) == "" {
-		entries, err := t.db.List(category, limit)
+		entries, err := t.db.List(category, limit, owner)
 		if err != nil {
 			return fmt.Sprintf("Error listing memories: %v", err), nil
 		}
@@ -82,9 +95,9 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 	var results []memory.SearchResult
 	var err error
 	if category != "" {
-		results, err = t.db.SearchByCategory(query, category, limit)
+		results, err = t.db.SearchByCategory(query, category, limit, owner)
 	} else {
-		results, err = t.db.Search(query, limit)
+		results, err = t.db.Search(query, limit, owner)
 	}
 
 	if err != nil {
