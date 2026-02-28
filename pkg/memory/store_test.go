@@ -124,6 +124,48 @@ func TestDeleteByOwnerShared(t *testing.T) {
 	}
 }
 
+func TestDeleteAccessibleOwned(t *testing.T) {
+	db := openTestDB(t)
+
+	db.Store("fact", "data", "core", "alice")
+
+	// alice can delete her own entry
+	if !db.DeleteAccessible("fact", "alice") {
+		t.Fatal("should delete alice's entry")
+	}
+	if db.Count() != 0 {
+		t.Fatal("should be empty")
+	}
+}
+
+func TestDeleteAccessibleShared(t *testing.T) {
+	db := openTestDB(t)
+
+	db.Store("fact", "data", "core", "")
+
+	// alice can delete shared entries
+	if !db.DeleteAccessible("fact", "alice") {
+		t.Fatal("should delete shared entry")
+	}
+	if db.Count() != 0 {
+		t.Fatal("should be empty")
+	}
+}
+
+func TestDeleteAccessibleProtectsOthers(t *testing.T) {
+	db := openTestDB(t)
+
+	db.Store("secret", "data", "core", "bob")
+
+	// alice cannot delete bob's private entry
+	if db.DeleteAccessible("secret", "alice") {
+		t.Fatal("should not delete bob's entry")
+	}
+	if db.Count() != 1 {
+		t.Fatal("bob's entry should still exist")
+	}
+}
+
 func TestDeleteAllByKey(t *testing.T) {
 	db := openTestDB(t)
 

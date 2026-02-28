@@ -66,6 +66,31 @@ func (m *MemoryDB) DeleteByOwner(key, owner string) bool {
 	return rows > 0
 }
 
+// DeleteAccessible removes entries matching the key that are either shared
+// or owned by the given owner. Does not touch other users' private entries.
+// When owner is empty, deletes all entries with that key.
+func (m *MemoryDB) DeleteAccessible(key, owner string) bool {
+	var err error
+	var rows int64
+	if owner != "" {
+		r, e := m.db.Exec("DELETE FROM memories WHERE key = ? AND (owner = '' OR owner = ?)", key, owner)
+		err = e
+		if r != nil {
+			rows, _ = r.RowsAffected()
+		}
+	} else {
+		r, e := m.db.Exec("DELETE FROM memories WHERE key = ?", key)
+		err = e
+		if r != nil {
+			rows, _ = r.RowsAffected()
+		}
+	}
+	if err != nil {
+		return false
+	}
+	return rows > 0
+}
+
 // GetByOwner retrieves a memory entry by key and owner. Returns nil if not found.
 func (m *MemoryDB) GetByOwner(key, owner string) *MemoryEntry {
 	row := m.db.QueryRow(`
