@@ -83,8 +83,12 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 			if i > 0 {
 				b.WriteString("\n---\n")
 			}
-			b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
-				e.Key, e.Category,
+			ownerLabel := "shared"
+			if e.Owner != "" {
+				ownerLabel = "owner:" + e.Owner
+			}
+			b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
+				e.Key, e.Category, ownerLabel,
 				e.UpdatedAt.Format("2006-01-02"),
 				e.Content,
 			))
@@ -113,9 +117,14 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
+		ownerLabel := "shared"
+		if r.Entry.Owner != "" {
+			ownerLabel = "owner:" + r.Entry.Owner
+		}
+		b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
 			r.Entry.Key,
 			r.Entry.Category,
+			ownerLabel,
 			r.Entry.UpdatedAt.Format("2006-01-02"),
 			r.Entry.Content,
 		))

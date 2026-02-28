@@ -53,6 +53,35 @@ func (m *MemoryDB) Delete(key string) bool {
 	return rows > 0
 }
 
+// DeleteByOwner removes a memory entry matching both key and owner.
+// Use owner="" to delete shared entries only. Returns true if deleted.
+func (m *MemoryDB) DeleteByOwner(key, owner string) bool {
+	result, err := m.db.Exec("DELETE FROM memories WHERE key = ? AND owner = ?", key, owner)
+	if err != nil {
+		return false
+	}
+	rows, _ := result.RowsAffected()
+	return rows > 0
+}
+
+// GetByOwner retrieves a memory entry by key and owner. Returns nil if not found.
+func (m *MemoryDB) GetByOwner(key, owner string) *MemoryEntry {
+	row := m.db.QueryRow(`
+		SELECT id, key, content, category, owner, created_at, updated_at
+		FROM memories WHERE key = ? AND owner = ?
+	`, key, owner)
+
+	var entry MemoryEntry
+	var createdAt, updatedAt string
+	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt)
+	if err != nil {
+		return nil
+	}
+	entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	return &entry
+}
+
 // List returns memory entries filtered by category, ordered by updated_at DESC.
 // Pass empty category to list all. When owner is non-empty, returns shared (owner='')
 // plus that owner's entries. Pass owner="" to return all entries (no filter).

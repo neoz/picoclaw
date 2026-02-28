@@ -29,7 +29,7 @@ func (t *MemoryForgetTool) Name() string {
 }
 
 func (t *MemoryForgetTool) Description() string {
-	return "Delete a memory entry by its key. Use this to forget or remove outdated information."
+	return `Delete a memory entry by its key. By default deletes your own entry for that key. Set shared=true to delete the shared entry instead. You can only delete your own or shared memories.`
 }
 
 func (t *MemoryForgetTool) Parameters() map[string]interface{} {
@@ -39,6 +39,10 @@ func (t *MemoryForgetTool) Parameters() map[string]interface{} {
 			"key": map[string]interface{}{
 				"type":        "string",
 				"description": "The key of the memory entry to delete",
+			},
+			"shared": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Set to true to delete the shared entry (owner='') instead of the current user's entry. Default: false.",
 			},
 		},
 		"required": []string{"key"},
@@ -55,16 +59,17 @@ func (t *MemoryForgetTool) Execute(ctx context.Context, args map[string]interfac
 	owner := t.owner
 	t.mu.Unlock()
 
-	// Check ownership before deleting
-	if owner != "" {
-		entry := t.db.Get(key)
-		if entry != nil && entry.Owner != "" && entry.Owner != owner {
-			return fmt.Sprintf("Error: cannot delete memory owned by another user: key=%q", key), nil
-		}
+	// Determine which owner's entry to delete
+	targetOwner := owner
+	if shared, ok := args["shared"].(bool); ok && shared {
+		targetOwner = ""
 	}
 
-	if t.db.Delete(key) {
-		return fmt.Sprintf("Memory deleted: key=%q", key), nil
+	if t.db.DeleteByOwner(key, targetOwner) {
+		if targetOwner == "" {
+			return fmt.Sprintf("Shared memory deleted: key=%q", key), nil
+		}
+		return fmt.Sprintf("Memory deleted: key=%q (owner=%s)", key, targetOwner), nil
 	}
 	return fmt.Sprintf("Memory not found: key=%q", key), nil
 }
