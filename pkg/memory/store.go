@@ -40,8 +40,8 @@ func (m *MemoryDB) Get(key string) *MemoryEntry {
 	if err != nil {
 		return nil
 	}
-	entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	entry.CreatedAt = parseTime(createdAt)
+	entry.UpdatedAt = parseTime(updatedAt)
 	return &entry
 }
 
@@ -104,8 +104,8 @@ func (m *MemoryDB) GetByOwner(key, owner string) *MemoryEntry {
 	if err != nil {
 		return nil
 	}
-	entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	entry.CreatedAt = parseTime(createdAt)
+	entry.UpdatedAt = parseTime(updatedAt)
 	return &entry
 }
 
@@ -148,8 +148,8 @@ func (m *MemoryDB) List(category string, limit int, owner string) ([]MemoryEntry
 		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
 			continue
 		}
-		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		entry.CreatedAt = parseTime(createdAt)
+		entry.UpdatedAt = parseTime(updatedAt)
 		entries = append(entries, entry)
 	}
 	return entries, nil
@@ -202,8 +202,8 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string
 		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
 			continue
 		}
-		entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		entry.CreatedAt = parseTime(createdAt)
+		entry.UpdatedAt = parseTime(updatedAt)
 		entries = append(entries, entry)
 	}
 	return entries, nil

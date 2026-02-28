@@ -165,6 +165,18 @@ func (m *MemoryDB) createSchema() error {
 	return err
 }
 
+// parseTime parses a timestamp string, trying multiple formats to handle
+// both "2006-01-02 15:04:05" and RFC3339 ("2006-01-02T15:04:05Z") stored values.
+func parseTime(s string) time.Time {
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
 // validateCategory checks if the category is valid, defaults to "core".
 func validateCategory(category string) string {
 	if category == "" {

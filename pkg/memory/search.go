@@ -3,7 +3,6 @@ package memory
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // SearchResult represents a search hit with its BM25 rank.
@@ -116,8 +115,8 @@ func scanSearchResults(rows interface {
 		); err != nil {
 			continue
 		}
-		result.Entry.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-		result.Entry.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		result.Entry.CreatedAt = parseTime(createdAt)
+		result.Entry.UpdatedAt = parseTime(updatedAt)
 		results = append(results, result)
 	}
 	return results, nil

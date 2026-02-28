@@ -276,7 +276,7 @@ func (m *MemoryDB) getRelationsForEntity(entityID int64) ([]Relation, error) {
 		if memKey != nil {
 			r.MemoryKey = *memKey
 		}
-		r.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		r.CreatedAt = parseTime(createdAt)
 		rels = append(rels, r)
 	}
 	return rels, nil
