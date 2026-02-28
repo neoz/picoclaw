@@ -168,6 +168,57 @@ func (m *MemoryDB) migrateAddOwner() error {
 	return tx.Commit()
 }
 
+// rebuildFTS drops and recreates the FTS index from the memories table.
+// This repairs corruption caused by out-of-sync FTS triggers.
+func (m *MemoryDB) rebuildFTS() error {
+	// Drop triggers first
+	for _, name := range []string{"memories_ai", "memories_ad", "memories_au"} {
+		m.db.Exec("DROP TRIGGER IF EXISTS " + name)
+	}
+
+	// Drop and recreate FTS table
+	if _, err := m.db.Exec("DROP TABLE IF EXISTS memories_fts"); err != nil {
+		return fmt.Errorf("drop fts: %w", err)
+	}
+
+	if _, err := m.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+		key, content, category, content='memories', content_rowid='id'
+	)`); err != nil {
+		return fmt.Errorf("create fts: %w", err)
+	}
+
+	// Repopulate from main table
+	if _, err := m.db.Exec(`INSERT INTO memories_fts(rowid, key, content, category)
+		SELECT id, key, content, category FROM memories`); err != nil {
+		return fmt.Errorf("populate fts: %w", err)
+	}
+
+	// Recreate triggers
+	triggers := []string{
+		`CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+			INSERT INTO memories_fts(rowid, key, content, category)
+			VALUES (new.id, new.key, new.content, new.category);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+			INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+			VALUES ('delete', old.id, old.key, old.content, old.category);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+			INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+			VALUES ('delete', old.id, old.key, old.content, old.category);
+			INSERT INTO memories_fts(rowid, key, content, category)
+			VALUES (new.id, new.key, new.content, new.category);
+		END`,
+	}
+	for _, stmt := range triggers {
+		if _, err := m.db.Exec(stmt); err != nil {
+			return fmt.Errorf("create trigger: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // migrateDeduplicateKeys removes duplicate entries where the same key exists
 // with different owners. Keeps the most recently updated entry for each key.
 func (m *MemoryDB) migrateDeduplicateKeys() error {

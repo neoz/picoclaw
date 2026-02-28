@@ -82,6 +82,13 @@ func Open(workspace string) (*MemoryDB, error) {
 		return nil, fmt.Errorf("create graph schema: %w", err)
 	}
 
+	// Rebuild FTS index to repair any corruption from out-of-sync triggers.
+	// Must run before migrations that use DELETE (dedup).
+	if err := mdb.rebuildFTS(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("rebuild fts: %w", err)
+	}
+
 	if err := mdb.migrateDeduplicateKeys(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("deduplicate keys: %w", err)
