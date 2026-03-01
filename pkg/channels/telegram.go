@@ -316,7 +316,14 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 			if replyFrom == "" {
 				replyFrom = fmt.Sprintf("userid-%d", message.ReplyToMessage.From.ID)
 			}
-			content = fmt.Sprintf("[reply to %s: %s]\n%s", replyFrom, replyText, content)
+			// Format each line of the quoted text as a blockquote
+			var quoted strings.Builder
+			for _, line := range strings.Split(replyText, "\n") {
+				quoted.WriteString("> ")
+				quoted.WriteString(line)
+				quoted.WriteString("\n")
+			}
+			content = fmt.Sprintf("(replying to %s):\n%s%s", replyFrom, quoted.String(), content)
 		}
 	}
 
