@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,19 @@ func NewSessionManager(storage string) *SessionManager {
 	}
 
 	return sm
+}
+
+// ListSessionKeys returns all loaded session keys in sorted order.
+func (sm *SessionManager) ListSessionKeys() []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	keys := make([]string, 0, len(sm.sessions))
+	for k := range sm.sessions {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (sm *SessionManager) GetOrCreate(key string) *Session {

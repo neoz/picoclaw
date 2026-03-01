@@ -3,16 +3,25 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemoryForgetTool struct {
-	db *memory.MemoryDB
+	db    *memory.MemoryDB
+	owner string
+	mu    sync.Mutex
 }
 
 func NewMemoryForgetTool(db *memory.MemoryDB) *MemoryForgetTool {
 	return &MemoryForgetTool{db: db}
+}
+
+func (t *MemoryForgetTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
 }
 
 func (t *MemoryForgetTool) Name() string {
@@ -20,7 +29,7 @@ func (t *MemoryForgetTool) Name() string {
 }
 
 func (t *MemoryForgetTool) Description() string {
-	return "Delete a memory entry by its key. Use this to forget or remove outdated information."
+	return "Delete a memory entry by its key. Removes your own and shared entries for that key. Cannot delete other users' private entries."
 }
 
 func (t *MemoryForgetTool) Parameters() map[string]interface{} {
@@ -42,7 +51,11 @@ func (t *MemoryForgetTool) Execute(ctx context.Context, args map[string]interfac
 		return "Error: 'key' parameter is required.", nil
 	}
 
-	if t.db.Delete(key) {
+	t.mu.Lock()
+	owner := t.owner
+	t.mu.Unlock()
+
+	if t.db.DeleteAccessible(key, owner) {
 		return fmt.Sprintf("Memory deleted: key=%q", key), nil
 	}
 	return fmt.Sprintf("Memory not found: key=%q", key), nil

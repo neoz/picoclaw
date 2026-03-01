@@ -3,11 +3,14 @@ package tools
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/session"
 )
+
+var reOldReply = regexp.MustCompile(`^\[reply to ([^:]+): ([\s\S]*?)\]\n`)
 
 // STMTool provides message history access via SessionManager.
 // Implements ContextualTool.
@@ -133,7 +136,28 @@ func formatLogEntries(entries []session.MessageLogEntry) string {
 		if e.SenderName != "" {
 			sender = e.SenderName
 		}
-		b.WriteString(fmt.Sprintf("[%s] %s: %s", e.Timestamp.Format("2006-01-02 15:04"), sender, e.Content))
+		content := normalizeReplyFormat(e.Content)
+		b.WriteString(fmt.Sprintf("[%s] %s: %s", e.Timestamp.Format("2006-01-02 15:04"), sender, content))
 	}
 	return b.String()
+}
+
+// normalizeReplyFormat converts old "[reply to X: Y]\ncontent" format
+// to the new blockquote format "(replying to X):\n> Y\ncontent".
+func normalizeReplyFormat(content string) string {
+	m := reOldReply.FindStringSubmatchIndex(content)
+	if m == nil {
+		return content
+	}
+	replyTo := content[m[2]:m[3]]
+	quotedText := content[m[4]:m[5]]
+	rest := content[m[1]:]
+
+	var quoted strings.Builder
+	for _, line := range strings.Split(quotedText, "\n") {
+		quoted.WriteString("> ")
+		quoted.WriteString(line)
+		quoted.WriteString("\n")
+	}
+	return fmt.Sprintf("(replying to %s):\n%s%s", replyTo, quoted.String(), rest)
 }

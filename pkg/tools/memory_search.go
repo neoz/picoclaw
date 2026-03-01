@@ -4,16 +4,25 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
 
 type MemorySearchTool struct {
-	db *memory.MemoryDB
+	db    *memory.MemoryDB
+	owner string
+	mu    sync.Mutex
 }
 
 func NewMemorySearchTool(db *memory.MemoryDB) *MemorySearchTool {
 	return &MemorySearchTool{db: db}
+}
+
+func (t *MemorySearchTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
 }
 
 func (t *MemorySearchTool) Name() string {
@@ -21,7 +30,7 @@ func (t *MemorySearchTool) Name() string {
 }
 
 func (t *MemorySearchTool) Description() string {
-	return "Search across all memory entries using full-text search with BM25 ranking. Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
+	return "Search across all memory entries . Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
 }
 
 func (t *MemorySearchTool) Parameters() map[string]interface{} {
@@ -56,9 +65,13 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 
 	category, _ := args["category"].(string)
 
+	t.mu.Lock()
+	owner := t.owner
+	t.mu.Unlock()
+
 	// Empty query: fall back to listing recent entries
 	if strings.TrimSpace(query) == "" {
-		entries, err := t.db.List(category, limit)
+		entries, err := t.db.List(category, limit, owner)
 		if err != nil {
 			return fmt.Sprintf("Error listing memories: %v", err), nil
 		}
@@ -70,8 +83,12 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 			if i > 0 {
 				b.WriteString("\n---\n")
 			}
-			b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
-				e.Key, e.Category,
+			ownerLabel := "shared"
+			if e.Owner != "" {
+				ownerLabel = "owner:" + e.Owner
+			}
+			b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
+				e.Key, e.Category, ownerLabel,
 				e.UpdatedAt.Format("2006-01-02"),
 				e.Content,
 			))
@@ -82,9 +99,9 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 	var results []memory.SearchResult
 	var err error
 	if category != "" {
-		results, err = t.db.SearchByCategory(query, category, limit)
+		results, err = t.db.SearchByCategory(query, category, limit, owner)
 	} else {
-		results, err = t.db.Search(query, limit)
+		results, err = t.db.Search(query, limit, owner)
 	}
 
 	if err != nil {
@@ -100,9 +117,14 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		b.WriteString(fmt.Sprintf("[%s] (%s) updated:%s\n%s",
+		ownerLabel := "shared"
+		if r.Entry.Owner != "" {
+			ownerLabel = "owner:" + r.Entry.Owner
+		}
+		b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
 			r.Entry.Key,
 			r.Entry.Category,
+			ownerLabel,
 			r.Entry.UpdatedAt.Format("2006-01-02"),
 			r.Entry.Content,
 		))

@@ -215,16 +215,32 @@ func createWorkspaceTemplates(workspace string) {
 	templates := map[string]string{
 		"AGENTS.md": `# Agent Instructions
 
-You are a helpful AI assistant. Be concise, accurate, and friendly.
+You are a helpful AI assistant operating in a multi-agent system. Be concise, accurate, and friendly.
 
 ## Guidelines
 
 - Always explain what you're doing before taking actions
-- Ask for clarification when request is ambiguous
+- Ask for clarification when the request is ambiguous
 - Use tools to help accomplish tasks
 - Remember important information in your memory files
 - Be proactive and helpful
 - Learn from user feedback
+
+## Agent Delegation
+
+When a specialist agent is available and suited for the task, **always use the ` + "`delegate`" + ` tool instead of handling it yourself**.
+
+- Provide clear context and expected output format in the delegation message
+- Review the specialist's output before relaying to the user
+- For complex tasks, break into subtasks and delegate each to the appropriate specialist
+- Skip delegation when the task is trivial, no specialist matches, or the user asks you to handle it directly
+
+### Delegation Flow
+
+1. Receive user request
+2. Identify if a specialist agent matches the task
+3. If yes → ` + "`delegate`" + ` with context + expected output → review result → respond to user
+4. If no → handle directly
 `,
 		"SOUL.md": `# Soul
 
@@ -576,8 +592,8 @@ func gatewayCmd() {
 	}
 
 	var transcriber *voice.GroqTranscriber
-	if cfg.Providers.Groq.APIKey != "" {
-		transcriber = voice.NewGroqTranscriber(cfg.Providers.Groq.APIKey)
+	if groqCfg := cfg.GetProviderConfig("groq"); groqCfg != nil && groqCfg.APIKey != "" {
+		transcriber = voice.NewGroqTranscriber(groqCfg.APIKey)
 		logger.InfoC("voice", "Groq voice transcription enabled")
 	}
 
@@ -666,30 +682,21 @@ func statusCmd() {
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Printf("Model: %s\n", cfg.Agents.Defaults.Model)
 
-		hasOpenRouter := cfg.Providers.OpenRouter.APIKey != ""
-		hasAnthropic := cfg.Providers.Anthropic.APIKey != ""
-		hasOpenAI := cfg.Providers.OpenAI.APIKey != ""
-		hasGemini := cfg.Providers.Gemini.APIKey != ""
-		hasZhipu := cfg.Providers.Zhipu.APIKey != ""
-		hasGroq := cfg.Providers.Groq.APIKey != ""
-		hasVLLM := cfg.Providers.VLLM.APIBase != ""
-
-		status := func(enabled bool) string {
-			if enabled {
-				return "✓"
+		for _, name := range cfg.ProviderNames() {
+			p := cfg.GetProviderConfig(name)
+			if p == nil {
+				continue
 			}
-			return "not set"
-		}
-		fmt.Println("OpenRouter API:", status(hasOpenRouter))
-		fmt.Println("Anthropic API:", status(hasAnthropic))
-		fmt.Println("OpenAI API:", status(hasOpenAI))
-		fmt.Println("Gemini API:", status(hasGemini))
-		fmt.Println("Zhipu API:", status(hasZhipu))
-		fmt.Println("Groq API:", status(hasGroq))
-		if hasVLLM {
-			fmt.Printf("vLLM/Local: ✓ %s\n", cfg.Providers.VLLM.APIBase)
-		} else {
-			fmt.Println("vLLM/Local: not set")
+			hasKey := p.APIKey != ""
+			hasBase := p.APIBase != ""
+			switch {
+			case hasKey:
+				fmt.Printf("%s API: ✓\n", name)
+			case hasBase:
+				fmt.Printf("%s: ✓ %s\n", name, p.APIBase)
+			default:
+				fmt.Printf("%s API: not set\n", name)
+			}
 		}
 	}
 

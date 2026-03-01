@@ -22,6 +22,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 	"github.com/sipeed/picoclaw/pkg/voice"
 )
 
@@ -261,9 +262,8 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 			transcribedText := ""
 			if c.transcriber != nil && c.transcriber.IsAvailable() {
 				tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-
 				result, err := c.transcriber.Transcribe(tctx, voicePath)
+				cancel()
 				if err != nil {
 					log.Printf("Voice transcription failed: %v", err)
 					transcribedText = fmt.Sprintf("[voice: %s (transcription failed)]", voicePath)
@@ -304,14 +304,83 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		}
 	}
 
+	// Include replied-to message content so the agent has context
+	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil &&
+		message.ReplyToMessage.From.ID != c.botID {
+		replyText := message.ReplyToMessage.Text
+		if replyText == "" {
+			replyText = message.ReplyToMessage.Caption
+		}
+		if replyText != "" {
+			replyFrom := message.ReplyToMessage.From.Username
+			if replyFrom == "" {
+				replyFrom = fmt.Sprintf("userid-%d", message.ReplyToMessage.From.ID)
+			}
+			// Format each line of the quoted text as a blockquote
+			var quoted strings.Builder
+			for _, line := range strings.Split(replyText, "\n") {
+				quoted.WriteString("> ")
+				quoted.WriteString(line)
+				quoted.WriteString("\n")
+			}
+			content = fmt.Sprintf("(replying to %s):\n%s%s", replyFrom, quoted.String(), content)
+		}
+	}
+
 	if content == "" {
 		content = "[empty message]"
 	}
 
-	log.Printf("Telegram message from %s: %s...", senderID, truncateString(content, 50))
+	log.Printf("Telegram message from %s: %s", senderID, utils.Truncate(content, 50))
 
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
+	tempAllowed := false
+
+	// Handle /allow command in groups: allowed users can grant temp access
+	if isGroup && allowed && (content == "/allow" || strings.HasPrefix(content, "/allow ")) {
+		arg := strings.TrimSpace(strings.TrimPrefix(content, "/allow"))
+		arg = strings.TrimPrefix(arg, "@")
+
+		var targetName string
+		var targetID int64
+
+		if arg != "" {
+			// Explicit target: /allow @username or /allow 123456
+			if id, err := strconv.ParseInt(arg, 10, 64); err == nil {
+				targetID = id
+			} else {
+				targetName = arg
+			}
+		} else if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
+			// Reply-based: reply to a message with /allow
+			replyUser := message.ReplyToMessage.From
+			targetName = replyUser.Username
+			targetID = replyUser.ID
+		}
+
+		if targetName != "" || targetID != 0 {
+			c.grantTempAllow(chatID, targetName, targetID)
+			var displayName string
+			if targetName != "" {
+				displayName = "@" + targetName
+			} else {
+				displayName = fmt.Sprintf("user %d", targetID)
+			}
+			replyText := fmt.Sprintf("Granted %s temporary access for %d minutes.", displayName, int(tempAllowTTL.Minutes()))
+			c.sendWithRetry(func() error {
+				_, e := c.bot.SendMessage(ctx, &telego.SendMessageParams{
+					ChatID: tu.ID(chatID),
+					Text:   replyText,
+					ReplyParameters: &telego.ReplyParameters{
+						MessageID: message.MessageID,
+					},
+				})
+				return e
+			})
+		}
+		return
+	}
 
 	if !allowed && !isGroup {
 		log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
@@ -341,9 +410,10 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 		// Bot is mentioned or replied to - check temp allow for non-allowed users
 		if !allowed {
-			if c.config.AllowTemp && c.consumeTempAllow(chatID, user) {
+			if c.checkTempAllow(chatID, user) {
 				allowed = true
-				log.Printf("Telegram message from %s: one-time temp allow granted", senderID)
+				tempAllowed = true
+				log.Printf("Telegram message from %s: temp allow active", senderID)
 			} else {
 				log.Printf("Telegram message from %s: not in allow list, ignoring", senderID)
 				c.publishObserveOnly(senderID, chatID, message.MessageID, user, content, mediaPaths)
@@ -357,12 +427,6 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		if content == "" {
 			content = "[empty message]"
 		}
-	}
-
-	// Grant one-time temp allow for other users mentioned in this message
-	// Only permanently allowed users can grant temp access
-	if isGroup && c.config.AllowTemp && c.IsAllowed(senderID) {
-		c.grantTempAllows(chatID, message)
 	}
 
 	// React to sender message to acknowledge receipt
@@ -392,6 +456,16 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		"is_group":   fmt.Sprintf("%t", isGroup),
 	}
 
+	// Route to specific agent: temp-allowed users use temp_allow_agent config,
+	// regular users use allow_from ":agentID" suffix
+	if tempAllowed {
+		if agentID := c.config.TempAllowAgent; agentID != "" {
+			metadata["agent_id"] = agentID
+		}
+	} else if agentID := c.ResolveAgentID(senderID); agentID != "" {
+		metadata["agent_id"] = agentID
+	}
+
 	sessionKey := fmt.Sprintf("%s:%s", c.name, chatIDStr)
 	c.bus.PublishInbound(bus.InboundMessage{
 		Channel:    c.name,
@@ -411,10 +485,10 @@ func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) stri
 		return ""
 	}
 
-	return c.downloadFileWithInfo(file, ".jpg")
+	return c.downloadFileWithInfo(ctx, file, ".jpg")
 }
 
-func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) string {
+func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego.File, ext string) string {
 	if file.FilePath == "" {
 		return ""
 	}
@@ -430,7 +504,7 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	baseName := filepath.Base(file.FilePath)
 	localPath := filepath.Join(mediaDir, baseName[:min(16, len(baseName))]+ext)
 
-	if err := c.downloadFromURL(url, localPath); err != nil {
+	if err := c.downloadFromURL(ctx, url, localPath); err != nil {
 		log.Printf("Failed to download file: %v", err)
 		return ""
 	}
@@ -438,8 +512,12 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	return localPath
 }
 
-func (c *TelegramChannel) downloadFromURL(url, localPath string) error {
-	resp, err := http.Get(url)
+func (c *TelegramChannel) downloadFromURL(ctx context.Context, url, localPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
@@ -470,72 +548,50 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 		log.Printf("Failed to get file: %v", err)
 		return ""
 	}
-
-	if file.FilePath == "" {
-		return ""
-	}
-
-	url := c.bot.FileDownloadURL(file.FilePath)
-
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		log.Printf("Failed to create media directory: %v", err)
-		return ""
-	}
-
-	localPath := filepath.Join(mediaDir, fileID[:16]+ext)
-
-	if err := c.downloadFromURL(url, localPath); err != nil {
-		log.Printf("Failed to download file: %v", err)
-		return ""
-	}
-
-	return localPath
+	return c.downloadFileWithInfo(ctx, file, ext)
 }
 
-const tempAllowTTL = 30 * time.Minute
+const tempAllowTTL = 10 * time.Minute
 
-// grantTempAllows extracts @mentioned users from an allowed user's message
-// and grants them one-time access to interact with the bot in this chat.
-func (c *TelegramChannel) grantTempAllows(chatID int64, message *telego.Message) {
-	for _, e := range message.Entities {
-		switch e.Type {
-		case "mention":
-			name := extractEntityText(message.Text, e.Offset+1, e.Length-1)
-			if strings.EqualFold(name, c.botUsername) {
-				continue
-			}
-			key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(name))
-			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
-			log.Printf("Temp allow granted for @%s in chat %d", name, chatID)
-		case "text_mention":
-			if e.User == nil {
-				continue
-			}
-			key := fmt.Sprintf("%d:%d", chatID, e.User.ID)
-			c.tempAllows.Store(key, time.Now().Add(tempAllowTTL))
-			log.Printf("Temp allow granted for user %d in chat %d", e.User.ID, chatID)
-		}
+// grantTempAllow stores a temp allow for a target in a specific chat.
+// It stores both username and user ID keys when available so that users
+// without a Telegram username can still be matched by their numeric ID.
+func (c *TelegramChannel) grantTempAllow(chatID int64, username string, userID int64) {
+	expiry := time.Now().Add(tempAllowTTL)
+	if username != "" {
+		key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(username))
+		c.tempAllows.Store(key, expiry)
+	}
+	if userID != 0 {
+		key := fmt.Sprintf("%d:%d", chatID, userID)
+		c.tempAllows.Store(key, expiry)
+	}
+	if username != "" {
+		log.Printf("Temp allow granted for @%s (ID %d) in chat %d (expires in %v)", username, userID, chatID, tempAllowTTL)
+	} else {
+		log.Printf("Temp allow granted for user ID %d in chat %d (expires in %v)", userID, chatID, tempAllowTTL)
 	}
 }
 
-// consumeTempAllow checks if a user has a one-time temp allow and consumes it.
-func (c *TelegramChannel) consumeTempAllow(chatID int64, user *telego.User) bool {
+// checkTempAllow checks if a user has an active temp allow (time-window, not one-shot).
+func (c *TelegramChannel) checkTempAllow(chatID int64, user *telego.User) bool {
 	// Try by username first
 	if user.Username != "" {
 		key := fmt.Sprintf("%d:@%s", chatID, strings.ToLower(user.Username))
-		if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+		if expiry, ok := c.tempAllows.Load(key); ok {
 			if time.Now().Before(expiry.(time.Time)) {
 				return true
 			}
+			c.tempAllows.Delete(key)
 		}
 	}
-	// Try by user ID (for text_mention grants)
+	// Try by user ID
 	key := fmt.Sprintf("%d:%d", chatID, user.ID)
-	if expiry, ok := c.tempAllows.LoadAndDelete(key); ok {
+	if expiry, ok := c.tempAllows.Load(key); ok {
 		if time.Now().Before(expiry.(time.Time)) {
 			return true
 		}
+		c.tempAllows.Delete(key)
 	}
 	return false
 }
@@ -594,14 +650,21 @@ func extractEntityText(text string, offset, length int) string {
 	return string(utf16.Decode(units[offset : offset+length]))
 }
 
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen]
-}
-
 const telegramMaxMessageLength = 4096
+
+// Pre-compiled regexes for markdown-to-HTML conversion (used per message).
+var (
+	reMDHeading    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	reMDBlockquote = regexp.MustCompile(`(?m)^>\s*(.*)$`)
+	reMDBold       = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	reMDBoldUnd    = regexp.MustCompile(`__([^<]+?)__`)
+	reMDItalic     = regexp.MustCompile(`_([^_<>]+)_`)
+	reMDStrike     = regexp.MustCompile(`~~(.+?)~~`)
+	reMDLink       = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	reMDBullet     = regexp.MustCompile(`(?m)^[-*]\s+`)
+	reCodeBlock    = regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
+	reInlineCode   = regexp.MustCompile("`([^`]+)`")
+)
 
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
@@ -642,30 +705,29 @@ func markdownToTelegramHTML(text string) string {
 	inlineCodes := extractInlineCodes(text)
 	text = inlineCodes.text
 
-	text = regexp.MustCompile(`^#{1,6}\s+(.+)$`).ReplaceAllString(text, "$1")
+	text = reMDHeading.ReplaceAllString(text, "$1")
 
-	text = regexp.MustCompile(`^>\s*(.*)$`).ReplaceAllString(text, "$1")
+	text = reMDBlockquote.ReplaceAllString(text, "$1")
 
 	text = escapeHTML(text)
 
-	text = regexp.MustCompile(`\*\*(.+?)\*\*`).ReplaceAllString(text, "<b>$1</b>")
+	text = reMDBold.ReplaceAllString(text, "<b>$1</b>")
 
-	text = regexp.MustCompile(`__([^<]+?)__`).ReplaceAllString(text, "<b>$1</b>")
+	text = reMDBoldUnd.ReplaceAllString(text, "<b>$1</b>")
 
-	reItalic := regexp.MustCompile(`_([^_<>]+)_`)
-	text = reItalic.ReplaceAllStringFunc(text, func(s string) string {
-		match := reItalic.FindStringSubmatch(s)
+	text = reMDItalic.ReplaceAllStringFunc(text, func(s string) string {
+		match := reMDItalic.FindStringSubmatch(s)
 		if len(match) < 2 {
 			return s
 		}
 		return "<i>" + match[1] + "</i>"
 	})
 
-	text = regexp.MustCompile(`~~(.+?)~~`).ReplaceAllString(text, "<s>$1</s>")
+	text = reMDStrike.ReplaceAllString(text, "<s>$1</s>")
 
-	text = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`).ReplaceAllString(text, `<a href="$2">$1</a>`)
+	text = reMDLink.ReplaceAllString(text, `<a href="$2">$1</a>`)
 
-	text = regexp.MustCompile(`^[-*]\s+`).ReplaceAllString(text, "\u2022 ")
+	text = reMDBullet.ReplaceAllString(text, "\u2022 ")
 
 	for i, code := range inlineCodes.codes {
 		escaped := escapeHTML(code)
@@ -686,8 +748,7 @@ type codeBlockMatch struct {
 }
 
 func extractCodeBlocks(text string) codeBlockMatch {
-	re := regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
-	matches := re.FindAllStringSubmatch(text, -1)
+	matches := reCodeBlock.FindAllStringSubmatch(text, -1)
 
 	codes := make([]string, 0, len(matches))
 	for _, match := range matches {
@@ -695,7 +756,7 @@ func extractCodeBlocks(text string) codeBlockMatch {
 	}
 
 	idx := 0
-	text = re.ReplaceAllStringFunc(text, func(m string) string {
+	text = reCodeBlock.ReplaceAllStringFunc(text, func(m string) string {
 		placeholder := fmt.Sprintf("\x00CB%d\x00", idx)
 		idx++
 		return placeholder
@@ -710,8 +771,7 @@ type inlineCodeMatch struct {
 }
 
 func extractInlineCodes(text string) inlineCodeMatch {
-	re := regexp.MustCompile("`([^`]+)`")
-	matches := re.FindAllStringSubmatch(text, -1)
+	matches := reInlineCode.FindAllStringSubmatch(text, -1)
 
 	codes := make([]string, 0, len(matches))
 	for _, match := range matches {
@@ -719,7 +779,7 @@ func extractInlineCodes(text string) inlineCodeMatch {
 	}
 
 	idx := 0
-	text = re.ReplaceAllStringFunc(text, func(m string) string {
+	text = reInlineCode.ReplaceAllStringFunc(text, func(m string) string {
 		placeholder := fmt.Sprintf("\x00IC%d\x00", idx)
 		idx++
 		return placeholder

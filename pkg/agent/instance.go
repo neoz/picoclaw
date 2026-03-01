@@ -19,6 +19,7 @@ import (
 type AgentInstance struct {
 	ID             string
 	Name           string
+	Description    string
 	Model          string
 	Workspace      string
 	MaxIterations  int
@@ -89,8 +90,13 @@ func newAgentInstance(
 		name = agentCfg.ID
 	}
 
+	providerName := agentCfg.Provider
+	if providerName == "" {
+		providerName = cfg.Agents.Defaults.Provider
+	}
+
 	// Create per-agent provider
-	provider, err := providers.CreateProviderForModel(model, cfg)
+	provider, err := providers.CreateProviderForModel(model, providerName, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("agent %q: %w", agentCfg.ID, err)
 	}
@@ -104,51 +110,67 @@ func newAgentInstance(
 	// Per-agent tools registry
 	toolsRegistry := tools.NewToolRegistry()
 
+	// Build denied tools set for filtering
+	deniedSet := make(map[string]struct{}, len(agentCfg.DeniedTools))
+	for _, name := range agentCfg.DeniedTools {
+		deniedSet[name] = struct{}{}
+	}
+	registerIfAllowed := func(t tools.Tool) {
+		if _, denied := deniedSet[t.Name()]; !denied {
+			toolsRegistry.Register(t)
+		}
+	}
+
 	// Workspace-scoped tools
 	allowedDir := workspace
 	if !cfg.IsRestrictToWorkspace() {
 		allowedDir = ""
 	}
-	toolsRegistry.Register(tools.NewReadFileTool(allowedDir))
-	toolsRegistry.Register(tools.NewWriteFileTool(allowedDir))
-	toolsRegistry.Register(tools.NewListDirTool(allowedDir))
+	registerIfAllowed(tools.NewReadFileTool(allowedDir))
+	registerIfAllowed(tools.NewWriteFileTool(allowedDir))
+	registerIfAllowed(tools.NewListDirTool(allowedDir))
 	execTool := tools.NewExecTool(workspace)
 	execTool.SetRestrictToWorkspace(cfg.IsRestrictToWorkspace())
-	toolsRegistry.Register(execTool)
-	toolsRegistry.Register(tools.NewEditFileTool(allowedDir))
+	registerIfAllowed(execTool)
+	registerIfAllowed(tools.NewEditFileTool(allowedDir))
 
 	// Register shared tools
 	if shared.searchTool != nil {
-		toolsRegistry.Register(shared.searchTool)
+		registerIfAllowed(shared.searchTool)
 	}
 	if shared.fetchTool != nil {
-		toolsRegistry.Register(shared.fetchTool)
+		registerIfAllowed(shared.fetchTool)
 	}
 	if shared.messageTool != nil {
-		toolsRegistry.Register(shared.messageTool)
+		registerIfAllowed(shared.messageTool)
 	}
 	if shared.spawnTool != nil {
-		toolsRegistry.Register(shared.spawnTool)
+		registerIfAllowed(shared.spawnTool)
 	}
 	if shared.memStore != nil {
-		toolsRegistry.Register(shared.memStore)
+		registerIfAllowed(shared.memStore)
 	}
 	if shared.memForget != nil {
-		toolsRegistry.Register(shared.memForget)
+		registerIfAllowed(shared.memForget)
 	}
 	if shared.memSearch != nil {
-		toolsRegistry.Register(shared.memSearch)
+		registerIfAllowed(shared.memSearch)
 	}
 	if shared.costTool != nil {
-		toolsRegistry.Register(shared.costTool)
+		registerIfAllowed(shared.costTool)
 	}
 
 	// Per-agent STM tool (backed by this agent's session manager)
-	toolsRegistry.Register(tools.NewSTMTool(sessionsManager))
+	registerIfAllowed(tools.NewSTMTool(sessionsManager))
+	registerIfAllowed(tools.NewSessionMessagesTool(sessionsManager))
 
 	// Context builder
 	contextBuilder := NewContextBuilder(workspace)
-	contextBuilder.SetToolsRegistry(toolsRegistry)
+
+	if agentCfg.Instructions != "" {
+		contextBuilder.SetInstructions(agentCfg.Instructions, agentCfg.Context)
+	}
+
 	if memDB != nil {
 		contextBuilder.SetMemoryDB(memDB, memoryCfg)
 	}
@@ -163,6 +185,7 @@ func newAgentInstance(
 	return &AgentInstance{
 		ID:             agentCfg.ID,
 		Name:           name,
+		Description:    agentCfg.Description,
 		Model:          model,
 		Workspace:      workspace,
 		MaxIterations:  maxIterations,

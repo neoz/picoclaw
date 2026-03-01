@@ -3,6 +3,7 @@
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
       "model": "glm-4.7",
+      "provider": "",
       "max_tokens": 8192,
       "temperature": 0.7,
       "max_tool_iterations": 20
@@ -11,6 +12,7 @@
       {
         "id": "main",
         "name": "Orchestrator",
+        "description": "The main agent responsible for orchestrating tasks and delegating to specialist agents",
         "default": true,
         "subagents": {
           "allow_agents": ["planner", "coder", "qa", "security"]
@@ -19,6 +21,7 @@
       {
         "id": "planner",
         "name": "Planner",
+        "description": "Plans and breaks down complex tasks into steps",
         "model": "openai/gpt-4.1",
         "temperature": 0.5,
         "max_tool_iterations": 5,
@@ -27,7 +30,9 @@
       {
         "id": "coder",
         "name": "Code Assistant",
+        "description": "Writes, reviews, and debugs code",
         "model": "anthropic/claude-sonnet-4",
+        "provider": "anthropic",
         "workspace": "~/.picoclaw/workspace/coder",
         "max_tokens": 16384,
         "temperature": 0.3,
@@ -37,6 +42,7 @@
       {
         "id": "qa",
         "name": "QA Tester",
+        "description": "Tests functionality and verifies quality",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.2,
         "max_tool_iterations": 20,
@@ -45,10 +51,24 @@
       {
         "id": "security",
         "name": "Security Reviewer",
+        "description": "Reviews code and configurations for security vulnerabilities",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.1,
         "max_tool_iterations": 15,
         "skills": ["security"]
+      },
+      {
+        "id": "limited",
+        "name": "Limited Assistant",
+        "denied_tools": ["memory_store", "memory_forget", "exec"]
+      },
+      {
+        "id": "poem",
+        "name": "Poem Specialist",
+        "description": "Writes creative poems in any style",
+        "instructions": "You are a creative poet. Write poems in the requested style. Be expressive and original.",
+        "context": ["identity", "bootstrap", "safety", "skills", "memory"],
+        "denied_tools": ["exec", "write_file", "edit_file"]
       }
     ]
   },
@@ -56,8 +76,8 @@
     "telegram": {
       "enabled": false,
       "token": "YOUR_TELEGRAM_BOT_TOKEN",
-      "allow_from": ["YOUR_USER_ID"],
-      "allow_temp": false
+      "allow_from": ["YOUR_USER_ID", "OTHER_USER_ID:limited"],
+      "temp_allow_agent": ""
     },
     "discord": {
       "enabled": false,
@@ -93,43 +113,41 @@
   "providers": {
     "anthropic": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["anthropic/", "claude"]
     },
     "openai": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["openai/", "gpt"]
     },
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["openrouter/", "meta-llama/", "deepseek/", "google/"],
+      "fallback": true
     },
     "groq": {
       "api_key": "gsk_xxx",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["groq/", "groq"]
     },
     "zhipu": {
       "api_key": "YOUR_ZHIPU_API_KEY",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["glm", "zhipu", "zai"]
     },
     "gemini": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["gemini"]
     },
     "vllm": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "api_base": ""
     },
     "nvidia": {
       "api_key": "",
-      "api_base": "",
-      "user_agent": ""
+      "model_patterns": ["nvidia/"]
+    },
+    "kimi": {
+      "api_key": "",
+      "api_base": "https://api.moonshot.cn/v1",
+      "model_patterns": ["kimi", "moonshot"]
     }
   },
   "tools": {
@@ -163,7 +181,6 @@
     "search_limit": 20,
     "min_relevance": 0.1,
     "context_top_k": 10,
-    "auto_save": false,
     "snapshot_on_exit": false
   },
   "cost": {
@@ -194,6 +211,11 @@
     "leak_detector": {
       "enabled": false,
       "sensitivity": 0.7
+    },
+    "prompt_leak_guard": {
+      "enabled": false,
+      "threshold": 0.15,
+      "action": "block"
     }
   }
 }

@@ -37,8 +37,9 @@ type AgentLoop struct {
 	memoryDB    *memory.MemoryDB
 	memoryCfg    *config.MemoryConfig
 	costTracker  *cost.CostTracker
-	promptGuard  *security.PromptGuard
-	leakDetector *security.LeakDetector
+	promptGuard       *security.PromptGuard
+	leakDetector      *security.LeakDetector
+	promptLeakGuards  sync.Map // agentID -> *security.PromptLeakDetector
 }
 
 // processOptions configures how a message is processed
@@ -51,6 +52,7 @@ type processOptions struct {
 	EnableSummary   bool              // Whether to trigger summarization
 	SendResponse    bool              // Whether to send response via bus
 	Metadata        map[string]string // Original inbound message metadata
+	Owner           string            // Memory owner (username for scoped access)
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error) {
@@ -219,9 +221,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			// Resolve agent for this message
 			inst := al.resolveAgent(msg)
 
-			senderName := msg.Metadata["first_name"]
-			if uname := msg.Metadata["username"]; uname != "" {
-				senderName = uname
+			senderName := msg.Metadata["username"]
+			if senderName == "" {
+				senderName = msg.Metadata["user_id"]
 			}
 			inst.Sessions.AddToLog(msg.SessionKey, msg.Content, msg.SenderID, senderName)
 
@@ -375,6 +377,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		EnableSummary:   true,
 		SendResponse:    false,
 		Metadata:        msg.Metadata,
+		Owner:           resolveOwner(msg.Metadata),
 	})
 }
 
@@ -424,6 +427,18 @@ func getSenderDisplayName(meta map[string]string) string {
 	return ""
 }
 
+// resolveOwner extracts the memory owner from message metadata.
+// Prefers username, then user_id, falls back to "" (shared).
+func resolveOwner(meta map[string]string) string {
+	if name := meta["username"]; name != "" {
+		return name
+	}
+	if uid := meta["user_id"]; uid != "" {
+		return uid
+	}
+	return ""
+}
+
 func (al *AgentLoop) processSystemMessage(ctx context.Context, inst *AgentInstance, msg bus.InboundMessage) (string, error) {
 	// Verify this is a system message
 	if msg.Channel != "system" {
@@ -466,7 +481,7 @@ func (al *AgentLoop) processSystemMessage(ctx context.Context, inst *AgentInstan
 // It handles context building, LLM calls, tool execution, and response handling.
 func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts processOptions) (string, error) {
 	// 1. Update tool contexts
-	al.updateToolContexts(inst, opts.Channel, opts.ChatID)
+	al.updateToolContexts(inst, opts.Channel, opts.ChatID, opts.Owner)
 
 	// 2. Build messages
 	history := inst.Sessions.GetHistory(opts.SessionKey)
@@ -478,19 +493,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		nil,
 		opts.Channel,
 		opts.ChatID,
+		opts.Owner,
 	)
 
 	// 3. Save user message to session
 	inst.Sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
-
-	// 3.5. Auto-save conversation to memory if enabled
-	if al.memoryCfg != nil && al.memoryCfg.AutoSave && al.memoryDB != nil {
-		convKey := fmt.Sprintf("conv_%s_%s_%d", opts.Channel, opts.ChatID, time.Now().UnixMilli())
-		if err := al.memoryDB.Store(convKey, opts.UserMessage, "conversation"); err != nil {
-			logger.ErrorCF("memory", "Failed to auto-save conversation",
-				map[string]interface{}{"key": convKey, "error": err.Error()})
-		}
-	}
 
 	// 4. Run LLM iteration loop
 	finalContent, iteration, err := al.runLLMIteration(ctx, inst, messages, opts)
@@ -513,6 +520,27 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 					"session_key": opts.SessionKey,
 				})
 			finalContent = leakResult.Redacted
+		}
+	}
+
+	// 5.6. Prompt leak guard: detect system prompt content in output
+	if al.cfg.Security.PromptLeakGuard.Enabled {
+		plg := al.getPromptLeakGuard(inst)
+		if plg != nil {
+			plResult := plg.Scan(finalContent)
+			if plResult.Leaked {
+				logger.WarnCF("security", "System prompt leakage detected in response",
+					map[string]interface{}{
+						"matched":     plResult.MatchedCount,
+						"total":       plResult.TotalPrints,
+						"score":       plResult.Score,
+						"action":      string(plResult.Action),
+						"session_key": opts.SessionKey,
+					})
+				if plResult.Action == security.ActionBlock {
+					finalContent = "I'm unable to share my system instructions."
+				}
+			}
 		}
 	}
 
@@ -545,6 +573,28 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		})
 
 	return finalContent, nil
+}
+
+// getPromptLeakGuard returns a cached PromptLeakDetector for the given agent instance.
+// The detector is lazily created from the agent's stable system prompt (excluding
+// per-message memory/session context) and cached in promptLeakGuards.
+func (al *AgentLoop) getPromptLeakGuard(inst *AgentInstance) *security.PromptLeakDetector {
+	if v, ok := al.promptLeakGuards.Load(inst.ID); ok {
+		return v.(*security.PromptLeakDetector)
+	}
+	systemPrompt := inst.ContextBuilder.BuildSystemPrompt()
+	plg := security.NewPromptLeakDetector(
+		systemPrompt,
+		al.cfg.Security.PromptLeakGuard.Threshold,
+		al.cfg.Security.PromptLeakGuard.Action,
+	)
+	al.promptLeakGuards.Store(inst.ID, plg)
+	logger.DebugCF("security", "Prompt leak guard initialized",
+		map[string]interface{}{
+			"agent_id":     inst.ID,
+			"fingerprints": plg.FingerprintCount(),
+		})
+	return plg
 }
 
 // runLLMIteration executes the LLM call loop with tool handling.
@@ -733,7 +783,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 }
 
 // updateToolContexts updates the context for tools that need channel/chatID info.
-func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID string) {
+func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID, owner string) {
 	if tool, ok := inst.Tools.Get("message"); ok {
 		if mt, ok := tool.(*tools.MessageTool); ok {
 			mt.SetContext(channel, chatID)
@@ -754,6 +804,14 @@ func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID str
 			dt.SetContext(channel, chatID)
 		}
 	}
+	// Set owner on memory tools for scoped access
+	for _, name := range []string{"memory_store", "memory_search", "memory_forget"} {
+		if tool, ok := inst.Tools.Get(name); ok {
+			if ot, ok := tool.(tools.OwnerAwareTool); ok {
+				ot.SetOwner(owner)
+			}
+		}
+	}
 }
 
 // initDelegateTools creates and registers a DelegateTool on each agent that has
@@ -766,6 +824,19 @@ func (al *AgentLoop) initDelegateTools() {
 		dt := tools.NewDelegateTool(al, inst.Subagents.AllowAgents)
 		inst.Tools.Register(dt)
 		logger.InfoCF("agent", fmt.Sprintf("Registered delegate tool on agent %q (targets: %v)", inst.ID, inst.Subagents.AllowAgents), nil)
+
+		// Build subagent info for system prompt injection
+		var subagentInfos []SubagentInfo
+		for _, targetID := range inst.Subagents.AllowAgents {
+			if target, ok := al.registry.Get(targetID); ok {
+				subagentInfos = append(subagentInfos, SubagentInfo{
+					ID:          target.ID,
+					Name:        target.Name,
+					Description: target.Description,
+				})
+			}
+		}
+		inst.ContextBuilder.SetSubagents(subagentInfos)
 	}
 }
 
@@ -831,7 +902,7 @@ func (al *AgentLoop) ListAgents() []tools.AgentInfo {
 	agents := al.registry.List()
 	infos := make([]tools.AgentInfo, 0, len(agents))
 	for _, a := range agents {
-		infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name})
+		infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name, Description: a.Description})
 	}
 	return infos
 }

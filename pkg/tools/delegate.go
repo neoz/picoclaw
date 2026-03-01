@@ -43,10 +43,14 @@ func (t *DelegateTool) Description() string {
 		if !allowed[a.ID] {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("  - %s (%s)", a.ID, a.Name))
+		line := fmt.Sprintf("  - %s (%s)", a.ID, a.Name)
+		if a.Description != "" {
+			line += ": " + a.Description
+		}
+		parts = append(parts, line)
 	}
 
-	desc := "Delegate a task to a specialist agent. The agent runs with its own model, tools, and context, then returns the result."
+	desc := "Delegate a task to a specialist agent. You SHOULD use this tool whenever a user's request matches a specialist agent's expertise. The agent runs with its own model, tools, and context, then returns the result."
 	if len(parts) > 0 {
 		desc += "\n\nAvailable agents:\n" + strings.Join(parts, "\n")
 	}

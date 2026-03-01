@@ -47,6 +47,28 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 		return true
 	}
 
+	_, matched := c.matchAllowEntry(senderID)
+	return matched
+}
+
+// ResolveAgentID returns the agent ID suffix from the matching allow_from entry,
+// or empty string if no suffix or no match. Format: "user:agentID" -> "agentID".
+func (c *BaseChannel) ResolveAgentID(senderID string) string {
+	entry, matched := c.matchAllowEntry(senderID)
+	if !matched {
+		return ""
+	}
+	// Strip leading "@" and check for ":agentID" suffix
+	trimmed := strings.TrimPrefix(entry, "@")
+	if idx := strings.LastIndex(trimmed, ":"); idx > 0 {
+		return trimmed[idx+1:]
+	}
+	return ""
+}
+
+// matchAllowEntry returns the raw allow_from entry that matched the senderID
+// and whether a match was found.
+func (c *BaseChannel) matchAllowEntry(senderID string) (string, bool) {
 	// Extract parts from compound senderID like "123456|username"
 	idPart := senderID
 	userPart := ""
@@ -56,34 +78,45 @@ func (c *BaseChannel) IsAllowed(senderID string) bool {
 	}
 
 	for _, allowed := range c.allowList {
-		// Strip leading "@" from allowed value for username matching
+		// Strip leading "@" and agent suffix for matching
 		trimmed := strings.TrimPrefix(allowed, "@")
-		allowedID := trimmed
+		bare := trimmed
+		if idx := strings.LastIndex(bare, ":"); idx > 0 {
+			bare = bare[:idx]
+		}
+
+		allowedID := bare
 		allowedUser := ""
-		if idx := strings.Index(trimmed, "|"); idx > 0 {
-			allowedID = trimmed[:idx]
-			allowedUser = trimmed[idx+1:]
+		if idx := strings.Index(bare, "|"); idx > 0 {
+			allowedID = bare[:idx]
+			allowedUser = bare[idx+1:]
 		}
 
 		// Support either side using "id|username" compound form.
 		// This keeps backward compatibility with legacy Telegram allowlist entries.
-		if senderID == allowed ||
-			idPart == allowed ||
-			senderID == trimmed ||
-			idPart == trimmed ||
+		if senderID == bare ||
+			idPart == bare ||
 			idPart == allowedID ||
 			(allowedUser != "" && senderID == allowedUser) ||
-			(userPart != "" && (userPart == allowed || userPart == trimmed || userPart == allowedUser)) {
-			return true
+			(userPart != "" && (userPart == bare || userPart == allowedID || userPart == allowedUser)) {
+			return allowed, true
 		}
 	}
 
-	return false
+	return "", false
 }
 
 func (c *BaseChannel) HandleMessage(senderID, chatID, content string, media []string, metadata map[string]string) {
 	if !c.IsAllowed(senderID) {
 		return
+	}
+
+	// Route to specific agent if allow_from entry has ":agentID" suffix
+	if agentID := c.ResolveAgentID(senderID); agentID != "" {
+		if metadata == nil {
+			metadata = map[string]string{}
+		}
+		metadata["agent_id"] = agentID
 	}
 
 	// Build session key: channel:chatID

@@ -360,27 +360,6 @@ func TestParseChatID(t *testing.T) {
 	}
 }
 
-// --- truncateString ---
-
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		input  string
-		maxLen int
-		want   string
-	}{
-		{"hello", 10, "hello"},
-		{"hello", 5, "hello"},
-		{"hello", 3, "hel"},
-		{"", 5, ""},
-	}
-	for _, tt := range tests {
-		got := truncateString(tt.input, tt.maxLen)
-		if got != tt.want {
-			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
-		}
-	}
-}
-
 // --- extractEntityText ---
 
 func TestExtractEntityText(t *testing.T) {
