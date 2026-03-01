@@ -22,6 +22,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/utils"
 	"github.com/sipeed/picoclaw/pkg/voice"
 )
 
@@ -261,9 +262,8 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 			transcribedText := ""
 			if c.transcriber != nil && c.transcriber.IsAvailable() {
 				tctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-
 				result, err := c.transcriber.Transcribe(tctx, voicePath)
+				cancel()
 				if err != nil {
 					log.Printf("Voice transcription failed: %v", err)
 					transcribedText = fmt.Sprintf("[voice: %s (transcription failed)]", voicePath)
@@ -324,7 +324,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		content = "[empty message]"
 	}
 
-	log.Printf("Telegram message from %s: %s...", senderID, truncateString(content, 50))
+	log.Printf("Telegram message from %s: %s", senderID, utils.Truncate(content, 50))
 
 	isGroup := message.Chat.Type != "private"
 	allowed := c.IsAllowed(senderID)
@@ -478,10 +478,10 @@ func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) stri
 		return ""
 	}
 
-	return c.downloadFileWithInfo(file, ".jpg")
+	return c.downloadFileWithInfo(ctx, file, ".jpg")
 }
 
-func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) string {
+func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego.File, ext string) string {
 	if file.FilePath == "" {
 		return ""
 	}
@@ -497,7 +497,7 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	baseName := filepath.Base(file.FilePath)
 	localPath := filepath.Join(mediaDir, baseName[:min(16, len(baseName))]+ext)
 
-	if err := c.downloadFromURL(url, localPath); err != nil {
+	if err := c.downloadFromURL(ctx, url, localPath); err != nil {
 		log.Printf("Failed to download file: %v", err)
 		return ""
 	}
@@ -505,8 +505,12 @@ func (c *TelegramChannel) downloadFileWithInfo(file *telego.File, ext string) st
 	return localPath
 }
 
-func (c *TelegramChannel) downloadFromURL(url, localPath string) error {
-	resp, err := http.Get(url)
+func (c *TelegramChannel) downloadFromURL(ctx context.Context, url, localPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
@@ -537,27 +541,7 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 		log.Printf("Failed to get file: %v", err)
 		return ""
 	}
-
-	if file.FilePath == "" {
-		return ""
-	}
-
-	url := c.bot.FileDownloadURL(file.FilePath)
-
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		log.Printf("Failed to create media directory: %v", err)
-		return ""
-	}
-
-	localPath := filepath.Join(mediaDir, fileID[:16]+ext)
-
-	if err := c.downloadFromURL(url, localPath); err != nil {
-		log.Printf("Failed to download file: %v", err)
-		return ""
-	}
-
-	return localPath
+	return c.downloadFileWithInfo(ctx, file, ext)
 }
 
 const tempAllowTTL = 10 * time.Minute
@@ -659,14 +643,21 @@ func extractEntityText(text string, offset, length int) string {
 	return string(utf16.Decode(units[offset : offset+length]))
 }
 
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen]
-}
-
 const telegramMaxMessageLength = 4096
+
+// Pre-compiled regexes for markdown-to-HTML conversion (used per message).
+var (
+	reMDHeading    = regexp.MustCompile(`(?m)^#{1,6}\s+(.+)$`)
+	reMDBlockquote = regexp.MustCompile(`(?m)^>\s*(.*)$`)
+	reMDBold       = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	reMDBoldUnd    = regexp.MustCompile(`__([^<]+?)__`)
+	reMDItalic     = regexp.MustCompile(`_([^_<>]+)_`)
+	reMDStrike     = regexp.MustCompile(`~~(.+?)~~`)
+	reMDLink       = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	reMDBullet     = regexp.MustCompile(`(?m)^[-*]\s+`)
+	reCodeBlock    = regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
+	reInlineCode   = regexp.MustCompile("`([^`]+)`")
+)
 
 func splitMessage(text string, maxLen int) []string {
 	if len(text) <= maxLen {
@@ -707,30 +698,29 @@ func markdownToTelegramHTML(text string) string {
 	inlineCodes := extractInlineCodes(text)
 	text = inlineCodes.text
 
-	text = regexp.MustCompile(`^#{1,6}\s+(.+)$`).ReplaceAllString(text, "$1")
+	text = reMDHeading.ReplaceAllString(text, "$1")
 
-	text = regexp.MustCompile(`^>\s*(.*)$`).ReplaceAllString(text, "$1")
+	text = reMDBlockquote.ReplaceAllString(text, "$1")
 
 	text = escapeHTML(text)
 
-	text = regexp.MustCompile(`\*\*(.+?)\*\*`).ReplaceAllString(text, "<b>$1</b>")
+	text = reMDBold.ReplaceAllString(text, "<b>$1</b>")
 
-	text = regexp.MustCompile(`__([^<]+?)__`).ReplaceAllString(text, "<b>$1</b>")
+	text = reMDBoldUnd.ReplaceAllString(text, "<b>$1</b>")
 
-	reItalic := regexp.MustCompile(`_([^_<>]+)_`)
-	text = reItalic.ReplaceAllStringFunc(text, func(s string) string {
-		match := reItalic.FindStringSubmatch(s)
+	text = reMDItalic.ReplaceAllStringFunc(text, func(s string) string {
+		match := reMDItalic.FindStringSubmatch(s)
 		if len(match) < 2 {
 			return s
 		}
 		return "<i>" + match[1] + "</i>"
 	})
 
-	text = regexp.MustCompile(`~~(.+?)~~`).ReplaceAllString(text, "<s>$1</s>")
+	text = reMDStrike.ReplaceAllString(text, "<s>$1</s>")
 
-	text = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`).ReplaceAllString(text, `<a href="$2">$1</a>`)
+	text = reMDLink.ReplaceAllString(text, `<a href="$2">$1</a>`)
 
-	text = regexp.MustCompile(`^[-*]\s+`).ReplaceAllString(text, "\u2022 ")
+	text = reMDBullet.ReplaceAllString(text, "\u2022 ")
 
 	for i, code := range inlineCodes.codes {
 		escaped := escapeHTML(code)
@@ -751,8 +741,7 @@ type codeBlockMatch struct {
 }
 
 func extractCodeBlocks(text string) codeBlockMatch {
-	re := regexp.MustCompile("```[\\w]*\\n?([\\s\\S]*?)```")
-	matches := re.FindAllStringSubmatch(text, -1)
+	matches := reCodeBlock.FindAllStringSubmatch(text, -1)
 
 	codes := make([]string, 0, len(matches))
 	for _, match := range matches {
@@ -760,7 +749,7 @@ func extractCodeBlocks(text string) codeBlockMatch {
 	}
 
 	idx := 0
-	text = re.ReplaceAllStringFunc(text, func(m string) string {
+	text = reCodeBlock.ReplaceAllStringFunc(text, func(m string) string {
 		placeholder := fmt.Sprintf("\x00CB%d\x00", idx)
 		idx++
 		return placeholder
@@ -775,8 +764,7 @@ type inlineCodeMatch struct {
 }
 
 func extractInlineCodes(text string) inlineCodeMatch {
-	re := regexp.MustCompile("`([^`]+)`")
-	matches := re.FindAllStringSubmatch(text, -1)
+	matches := reInlineCode.FindAllStringSubmatch(text, -1)
 
 	codes := make([]string, 0, len(matches))
 	for _, match := range matches {
@@ -784,7 +772,7 @@ func extractInlineCodes(text string) inlineCodeMatch {
 	}
 
 	idx := 0
-	text = re.ReplaceAllStringFunc(text, func(m string) string {
+	text = reInlineCode.ReplaceAllStringFunc(text, func(m string) string {
 		placeholder := fmt.Sprintf("\x00IC%d\x00", idx)
 		idx++
 		return placeholder
