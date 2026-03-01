@@ -10,6 +10,40 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// sqliteTimeFormat is the timestamp format used for all SQLite datetime values.
+const sqliteTimeFormat = "2006-01-02 15:04:05"
+
+// Migration metadata keys.
+const (
+	metaMigratedMarkdown  = "migrated_markdown"
+	metaDeduplicatedKeys  = "deduplicated_keys"
+	metaFTSRebuilt        = "fts_rebuilt_v1"
+)
+
+// fts5CreateTable is the DDL for the FTS5 virtual table, shared between
+// createSchema() and rebuildFTS() to keep them in sync.
+const fts5CreateTable = `CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+	key, content, category, content='memories', content_rowid='id'
+)`
+
+// fts5TriggerDDL defines the triggers that keep the FTS index in sync.
+var fts5TriggerDDL = []string{
+	`CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+		INSERT INTO memories_fts(rowid, key, content, category)
+		VALUES (new.id, new.key, new.content, new.category);
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+		VALUES ('delete', old.id, old.key, old.content, old.category);
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
+		VALUES ('delete', old.id, old.key, old.content, old.category);
+		INSERT INTO memories_fts(rowid, key, content, category)
+		VALUES (new.id, new.key, new.content, new.category);
+	END`,
+}
+
 // MemoryEntry represents a single memory record.
 type MemoryEntry struct {
 	ID        int64
@@ -134,41 +168,24 @@ func (m *MemoryDB) createSchema() error {
 		key   TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	);
-
-	CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-		key,
-		content,
-		category,
-		content='memories',
-		content_rowid='id'
-	);
-
-	-- Triggers to keep FTS in sync
-	CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-		INSERT INTO memories_fts(rowid, key, content, category)
-		VALUES (new.id, new.key, new.content, new.category);
-	END;
-
-	CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
-		VALUES ('delete', old.id, old.key, old.content, old.category);
-	END;
-
-	CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-		INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
-		VALUES ('delete', old.id, old.key, old.content, old.category);
-		INSERT INTO memories_fts(rowid, key, content, category)
-		VALUES (new.id, new.key, new.content, new.category);
-	END;
 	`
-	_, err := m.db.Exec(schema)
-	return err
+	if _, err := m.db.Exec(schema); err != nil {
+		return err
+	}
+	if _, err := m.db.Exec(fts5CreateTable); err != nil {
+		return err
+	}
+	for _, stmt := range fts5TriggerDDL {
+		if _, err := m.db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// parseTime parses a timestamp string, trying multiple formats to handle
-// both "2006-01-02 15:04:05" and RFC3339 ("2006-01-02T15:04:05Z") stored values.
+// parseTime parses a timestamp string, trying sqliteTimeFormat first then RFC3339.
 func parseTime(s string) time.Time {
-	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+	if t, err := time.Parse(sqliteTimeFormat, s); err == nil {
 		return t
 	}
 	if t, err := time.Parse(time.RFC3339, s); err == nil {

@@ -249,7 +249,7 @@ func TestMigrateDeduplicateKeys(t *testing.T) {
 	}
 
 	// Reset migration flag so it runs again
-	db.db.Exec("DELETE FROM metadata WHERE key = 'deduplicated_keys'")
+	db.db.Exec("DELETE FROM metadata WHERE key = '" + metaDeduplicatedKeys + "'")
 
 	err := db.migrateDeduplicateKeys()
 	if err != nil {
@@ -277,7 +277,7 @@ func TestMigrateDeduplicateKeysIdempotent(t *testing.T) {
 	db.Store("k2", "v2", "core", "alice")
 
 	// Reset flag and run - should be safe with no duplicates
-	db.db.Exec("DELETE FROM metadata WHERE key = 'deduplicated_keys'")
+	db.db.Exec("DELETE FROM metadata WHERE key = '" + metaDeduplicatedKeys + "'")
 	err := db.migrateDeduplicateKeys()
 	if err != nil {
 		t.Fatal(err)

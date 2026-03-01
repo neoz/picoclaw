@@ -21,7 +21,7 @@ make clean              # Remove build artifacts
 make run ARGS="agent"   # Build and run with arguments
 ```
 
-Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/agent/context_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`, `pkg/security/promptleak_test.go`, `pkg/session/manager_test.go`, `pkg/tools/session_messages_test.go`, `pkg/config/config_test.go`, `pkg/providers/http_provider_test.go`, `pkg/secrets/secrets_test.go`, `pkg/memory/graph_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/` or `go test ./pkg/session/` or `go test ./pkg/tools/` or `go test ./pkg/config/` or `go test ./pkg/providers/` or `go test ./pkg/secrets/` or `go test ./pkg/memory/`.
+Test files: `pkg/logger/logger_test.go`, `pkg/channels/telegram_test.go`, `pkg/channels/base_test.go`, `pkg/agent/instance_test.go`, `pkg/agent/context_test.go`, `pkg/security/promptguard_test.go`, `pkg/security/leakdetector_test.go`, `pkg/security/promptleak_test.go`, `pkg/session/manager_test.go`, `pkg/tools/session_messages_test.go`, `pkg/config/config_test.go`, `pkg/providers/http_provider_test.go`, `pkg/secrets/secrets_test.go`, `pkg/memory/graph_test.go`, `pkg/memory/store_test.go`. Run with `go test ./pkg/logger/` or `go test ./pkg/security/` or `go test ./pkg/channels/` or `go test ./pkg/agent/` or `go test ./pkg/session/` or `go test ./pkg/tools/` or `go test ./pkg/config/` or `go test ./pkg/providers/` or `go test ./pkg/secrets/` or `go test ./pkg/memory/`.
 
 ## Architecture
 
@@ -105,6 +105,8 @@ Adding a config field: (1) add to struct in `pkg/config/config.go` with json + e
 
 **Docker secrets**: `.secret_key` is bind-mounted from host alongside `config.json` in `run.sh`/`docker-compose.yml`. `run.sh` uses `touch` to create the file if missing (Docker would create a directory otherwise). `entrypoint.sh` must `chown` all bind-mounted files to `picoclaw` user. `NewSecretStore` treats empty key files as missing and generates a new key. When adding new bind-mounted files: (1) add mount in `run.sh` + `docker-compose.yml`, (2) `touch` in `run.sh` before `docker run`, (3) `chown` in `entrypoint.sh`.
 
+**run.sh commands**: `--build`, `--clean`, `--stop`, `--restart`, `--force`, `skills-list`, `skills-export`, `skills-import <dir>`, `memory-export`. The `memory-export` command copies the `workspace/memory/` folder (including `memory.db`) from the running container to `./memory-export/`.
+
 **Web search priority** (in `loop.go`): Ollama Search (if `tools.web.ollama.api_key` set) > Brave Search (if `tools.web.search.api_key` set) > DuckDuckGo (free, no key required, always available as fallback). All three implement the same `web_search` tool name. `web_fetch` is always registered (Ollama fetch when using Ollama, standard fetch otherwise).
 
 **Known issue**: `ProviderConfig` no longer has env tags (they were non-functional `{{.Name}}` templates). Per-provider env var overrides don't work; only JSON config values are effective for provider API keys.
@@ -115,9 +117,15 @@ Memory is SQLite-backed (`pkg/memory/`). Three tools: `memory_store`, `memory_se
 
 Adding a memory feature: modify `pkg/memory/` for storage logic, `pkg/tools/memory_*.go` for tool interface, `pkg/agent/context.go` for prompt injection.
 
+**Owner model**: Each memory entry has an `owner` field. `owner=""` means shared (visible to all users); `owner="username"` means private to that user. Memory keys are globally unique: `Store()` deletes any existing entry with the same key (regardless of owner) before inserting, so a key cannot exist as both shared and private simultaneously. The `OwnerAwareTool` interface (in `tools/base.go`) provides `SetOwner(owner)`, called per-message from `updateToolContexts()` in `loop.go`. `memory_store` has `shared` bool param (default false) to store as shared memory. `memory_forget` uses `DeleteAccessible(key, owner)` which deletes entries where `owner=""` OR `owner=currentUser` -- no need for caller to specify ownership. `memory_search` output includes `(shared)` or `(owner:username)` labels. Query methods (`List`, `Search`, `ListRecent`) with non-empty owner return shared + that owner's entries.
+
+**FTS index**: `rebuildFTS()` runs on every startup in `Open()` -- drops and recreates the FTS5 virtual table + sync triggers from the main `memories` table. This self-heals FTS corruption that would silently block DELETE/UPDATE operations. Must run before any migration that uses DELETE (e.g. `migrateDeduplicateKeys`).
+
+**Timestamp parsing**: DB may store timestamps as either `"2006-01-02 15:04:05"` or RFC3339 (`"2006-01-02T15:04:05Z"`). The `parseTime()` helper in `db.go` tries both formats. All timestamp parsing across `store.go`, `search.go`, `graph.go` uses `parseTime()`.
+
 **Knowledge graph layer**: `graph.go` stores entity-relation triples (entities + relations tables) linked to memories via `memory_key` (text field, NOT a FK). `graph_schema.go` holds DDL. `memory_store` tool accepts optional `relations` parameter. `context.go` `buildGraphMemoryContext()` does entity matching + BFS walk for graph-first context injection, falling back to FTS5. **Retention cleanup chain** (in `retention.go`): delete expired memories -> `CleanStaleRelations()` (remove relations whose `memory_key` no longer exists in memories) -> `CleanOrphanedEntities()` (remove entities with zero relations). All three steps are required in order.
 
-**Memory tests**: `pkg/memory/graph_test.go`. Helper `openTestDB(t)` uses `t.TempDir()` + `t.Cleanup`.
+**Memory tests**: `pkg/memory/graph_test.go` (graph operations), `pkg/memory/store_test.go` (CRUD, owner scoping, dedup migration). Helper `openTestDB(t)` uses `t.TempDir()` + `t.Cleanup`.
 
 **Context tests**: `pkg/agent/context_test.go`. Use `NewContextBuilder(t.TempDir())` for unit tests (no real workspace files needed). Tests cover the full/lightweight prompt matrix and memory gating. For retention tests, backdate `updated_at` via `db.db.Exec` (same-package access) since `RunRetention` skips `days <= 0` and freshly-stored entries won't be older than the cutoff.
 

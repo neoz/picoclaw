@@ -122,6 +122,12 @@ func scanSearchResults(rows interface {
 	return results, nil
 }
 
+// fts5Replacer removes FTS5 special characters from query tokens.
+var fts5Replacer = strings.NewReplacer(
+	"*", "", "\"", "", "(", "", ")", "",
+	":", "", "^", "", "{", "", "}", "",
+)
+
 // sanitizeFTS5Query escapes special FTS5 characters and wraps tokens in quotes.
 func sanitizeFTS5Query(query string) string {
 	query = strings.TrimSpace(query)
@@ -133,17 +139,7 @@ func sanitizeFTS5Query(query string) string {
 	tokens := strings.Fields(query)
 	var quoted []string
 	for _, t := range tokens {
-		// Remove FTS5 special characters
-		t = strings.NewReplacer(
-			"*", "",
-			"\"", "",
-			"(", "",
-			")", "",
-			":", "",
-			"^", "",
-			"{", "",
-			"}", "",
-		).Replace(t)
+		t = fts5Replacer.Replace(t)
 		t = strings.TrimSpace(t)
 		if t != "" {
 			quoted = append(quoted, "\""+t+"\"")

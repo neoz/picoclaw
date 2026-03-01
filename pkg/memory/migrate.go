@@ -14,7 +14,7 @@ import (
 func (m *MemoryDB) MigrateFromMarkdown(memoryDir string) error {
 	// Check if already migrated
 	var migrated string
-	err := m.db.QueryRow("SELECT value FROM metadata WHERE key = 'migrated_markdown'").Scan(&migrated)
+	err := m.db.QueryRow("SELECT value FROM metadata WHERE key = ?", metaMigratedMarkdown).Scan(&migrated)
 	if err == nil && migrated == "true" {
 		return nil // Already migrated
 	}
@@ -81,7 +81,7 @@ func (m *MemoryDB) MigrateFromMarkdown(memoryDir string) error {
 
 	// Mark migration complete
 	_, err = m.db.Exec(
-		"INSERT OR REPLACE INTO metadata (key, value) VALUES ('migrated_markdown', 'true')",
+		"INSERT OR REPLACE INTO metadata (key, value) VALUES (?, 'true')", metaMigratedMarkdown,
 	)
 	return err
 }
@@ -170,20 +170,25 @@ func (m *MemoryDB) migrateAddOwner() error {
 
 // rebuildFTS drops and recreates the FTS index from the memories table.
 // This repairs corruption caused by out-of-sync FTS triggers.
+// Gated by metadata flag so the full rebuild only runs once.
 func (m *MemoryDB) rebuildFTS() error {
+	var done string
+	if err := m.db.QueryRow("SELECT value FROM metadata WHERE key = ?", metaFTSRebuilt).Scan(&done); err == nil && done == "true" {
+		return nil
+	}
+
 	// Drop triggers first
 	for _, name := range []string{"memories_ai", "memories_ad", "memories_au"} {
-		m.db.Exec("DROP TRIGGER IF EXISTS " + name)
+		if _, err := m.db.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
+			return fmt.Errorf("drop trigger %s: %w", name, err)
+		}
 	}
 
 	// Drop and recreate FTS table
 	if _, err := m.db.Exec("DROP TABLE IF EXISTS memories_fts"); err != nil {
 		return fmt.Errorf("drop fts: %w", err)
 	}
-
-	if _, err := m.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-		key, content, category, content='memories', content_rowid='id'
-	)`); err != nil {
+	if _, err := m.db.Exec(fts5CreateTable); err != nil {
 		return fmt.Errorf("create fts: %w", err)
 	}
 
@@ -194,36 +199,21 @@ func (m *MemoryDB) rebuildFTS() error {
 	}
 
 	// Recreate triggers
-	triggers := []string{
-		`CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-			INSERT INTO memories_fts(rowid, key, content, category)
-			VALUES (new.id, new.key, new.content, new.category);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-			INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
-			VALUES ('delete', old.id, old.key, old.content, old.category);
-		END`,
-		`CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-			INSERT INTO memories_fts(memories_fts, rowid, key, content, category)
-			VALUES ('delete', old.id, old.key, old.content, old.category);
-			INSERT INTO memories_fts(rowid, key, content, category)
-			VALUES (new.id, new.key, new.content, new.category);
-		END`,
-	}
-	for _, stmt := range triggers {
+	for _, stmt := range fts5TriggerDDL {
 		if _, err := m.db.Exec(stmt); err != nil {
 			return fmt.Errorf("create trigger: %w", err)
 		}
 	}
 
-	return nil
+	_, err := m.db.Exec("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, 'true')", metaFTSRebuilt)
+	return err
 }
 
 // migrateDeduplicateKeys removes duplicate entries where the same key exists
 // with different owners. Keeps the most recently updated entry for each key.
 func (m *MemoryDB) migrateDeduplicateKeys() error {
 	var migrated string
-	err := m.db.QueryRow("SELECT value FROM metadata WHERE key = 'deduplicated_keys'").Scan(&migrated)
+	err := m.db.QueryRow("SELECT value FROM metadata WHERE key = ?", metaDeduplicatedKeys).Scan(&migrated)
 	if err == nil && migrated == "true" {
 		return nil
 	}
@@ -242,7 +232,7 @@ func (m *MemoryDB) migrateDeduplicateKeys() error {
 	}
 
 	_, err = m.db.Exec(
-		"INSERT OR REPLACE INTO metadata (key, value) VALUES ('deduplicated_keys', 'true')",
+		"INSERT OR REPLACE INTO metadata (key, value) VALUES (?, 'true')", metaDeduplicatedKeys,
 	)
 	return err
 }

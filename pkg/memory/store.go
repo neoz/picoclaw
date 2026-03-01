@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -10,21 +11,28 @@ import (
 // any existing entry with the same key (regardless of owner) is replaced.
 func (m *MemoryDB) Store(key, content, category, owner string) error {
 	category = validateCategory(category)
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	now := time.Now().UTC().Format(sqliteTimeFormat)
+
+	tx, err := m.db.Begin()
+	if err != nil {
+		return fmt.Errorf("store memory: %w", err)
+	}
+	defer tx.Rollback()
 
 	// Delete any existing entries with this key (all owners) to prevent
 	// duplicates from the UNIQUE(key, owner) constraint allowing
 	// ("key", "") and ("key", "alice") to coexist.
-	_, _ = m.db.Exec("DELETE FROM memories WHERE key = ?", key)
-
-	_, err := m.db.Exec(`
-		INSERT INTO memories (key, content, category, owner, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, key, content, category, owner, now, now)
-	if err != nil {
+	if _, err := tx.Exec("DELETE FROM memories WHERE key = ?", key); err != nil {
 		return fmt.Errorf("store memory: %w", err)
 	}
-	return nil
+
+	if _, err := tx.Exec(`
+		INSERT INTO memories (key, content, category, owner, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, key, content, category, owner, now, now); err != nil {
+		return fmt.Errorf("store memory: %w", err)
+	}
+	return tx.Commit()
 }
 
 // Get retrieves a memory entry by key. Returns nil if not found.
@@ -70,24 +78,17 @@ func (m *MemoryDB) DeleteByOwner(key, owner string) bool {
 // or owned by the given owner. Does not touch other users' private entries.
 // When owner is empty, deletes all entries with that key.
 func (m *MemoryDB) DeleteAccessible(key, owner string) bool {
+	var result sql.Result
 	var err error
-	var rows int64
 	if owner != "" {
-		r, e := m.db.Exec("DELETE FROM memories WHERE key = ? AND (owner = '' OR owner = ?)", key, owner)
-		err = e
-		if r != nil {
-			rows, _ = r.RowsAffected()
-		}
+		result, err = m.db.Exec("DELETE FROM memories WHERE key = ? AND (owner = '' OR owner = ?)", key, owner)
 	} else {
-		r, e := m.db.Exec("DELETE FROM memories WHERE key = ?", key)
-		err = e
-		if r != nil {
-			rows, _ = r.RowsAffected()
-		}
+		result, err = m.db.Exec("DELETE FROM memories WHERE key = ?", key)
 	}
 	if err != nil {
 		return false
 	}
+	rows, _ := result.RowsAffected()
 	return rows > 0
 }
 
@@ -165,7 +166,7 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string
 		return nil, nil
 	}
 
-	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02 15:04:05")
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format(sqliteTimeFormat)
 
 	// Build placeholders for IN clause
 	placeholders := make([]string, len(categories))

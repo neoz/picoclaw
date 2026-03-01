@@ -490,7 +490,7 @@ func TestRetentionCleansOrphans(t *testing.T) {
 	db.AddRelation("Alice", "mentioned_in", "TempChat", "temp_fact")
 
 	// Backdate the memory so retention will pick it up (older than 1 day)
-	old := time.Now().UTC().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
+	old := time.Now().UTC().AddDate(0, 0, -5).Format(sqliteTimeFormat)
 	db.db.Exec("UPDATE memories SET updated_at = ? WHERE key = ?", old, "temp_fact")
 
 	// Run retention with 1-day conversation retention
