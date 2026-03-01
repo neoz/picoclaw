@@ -104,6 +104,7 @@ func (m *MemoryDB) SearchByCategory(query, category string, limit int, owner str
 func scanSearchResults(rows interface {
 	Next() bool
 	Scan(dest ...interface{}) error
+	Err() error
 }) ([]SearchResult, error) {
 	var results []SearchResult
 	for rows.Next() {
@@ -118,6 +119,9 @@ func scanSearchResults(rows interface {
 		result.Entry.CreatedAt = parseTime(createdAt)
 		result.Entry.UpdatedAt = parseTime(updatedAt)
 		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return results, fmt.Errorf("scan search results: %w", err)
 	}
 	return results, nil
 }

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"testing"
+	"time"
 )
 
 func TestStoreAndGet(t *testing.T) {
@@ -293,5 +294,220 @@ func TestMigrateDeduplicateKeysIdempotent(t *testing.T) {
 	}
 	if db.Count() != 2 {
 		t.Fatalf("expected 2, got %d", db.Count())
+	}
+}
+
+// === Fix #1: busy_timeout pragma ===
+
+func TestBusyTimeoutPragma(t *testing.T) {
+	db := openTestDB(t)
+
+	var timeout int
+	err := db.db.QueryRow("PRAGMA busy_timeout").Scan(&timeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timeout != 5000 {
+		t.Fatalf("expected busy_timeout=5000, got %d", timeout)
+	}
+}
+
+// === Fix #2: Store preserves created_at on update ===
+
+func TestStorePreservesCreatedAt(t *testing.T) {
+	db := openTestDB(t)
+
+	// Store initial entry
+	db.Store("fact", "v1", "core", "")
+	entry := db.Get("fact")
+	if entry == nil {
+		t.Fatal("expected entry")
+	}
+	originalCreatedAt := entry.CreatedAt
+
+	// Wait a moment so timestamps differ
+	time.Sleep(10 * time.Millisecond)
+
+	// Update the same key
+	db.Store("fact", "v2", "core", "")
+	entry = db.Get("fact")
+	if entry == nil {
+		t.Fatal("expected entry after update")
+	}
+	if entry.Content != "v2" {
+		t.Fatalf("expected content 'v2', got %q", entry.Content)
+	}
+	// created_at must be preserved from original insert
+	if !entry.CreatedAt.Equal(originalCreatedAt) {
+		t.Fatalf("created_at changed: original=%v, after update=%v", originalCreatedAt, entry.CreatedAt)
+	}
+	// updated_at must be newer or equal
+	if entry.UpdatedAt.Before(originalCreatedAt) {
+		t.Fatalf("updated_at should be >= created_at")
+	}
+}
+
+func TestStorePreservesCreatedAtAcrossOwners(t *testing.T) {
+	db := openTestDB(t)
+
+	db.Store("fact", "v1", "core", "")
+	entry := db.Get("fact")
+	originalCreatedAt := entry.CreatedAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Re-store with different owner - created_at from original should be preserved
+	db.Store("fact", "v2", "core", "alice")
+	entry = db.Get("fact")
+	if entry == nil {
+		t.Fatal("expected entry")
+	}
+	if entry.Owner != "alice" {
+		t.Fatalf("expected owner 'alice', got %q", entry.Owner)
+	}
+	if !entry.CreatedAt.Equal(originalCreatedAt) {
+		t.Fatalf("created_at changed across owner change: original=%v, after=%v", originalCreatedAt, entry.CreatedAt)
+	}
+}
+
+// === Fix #4: FTS rebuild on every startup ===
+
+func TestFTSRebuildOnReopen(t *testing.T) {
+	dir := t.TempDir()
+
+	// Open, store, close
+	db1, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db1.Store("golang", "Go is a programming language", "core", "")
+	db1.Store("rustlang", "Rust is a systems language", "core", "")
+	db1.Close()
+
+	// Reopen - FTS should be rebuilt and search should work
+	db2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+
+	results, err := db2.Search("programming", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 search result after reopen, got %d", len(results))
+	}
+	if results[0].Entry.Key != "golang" {
+		t.Fatalf("expected key 'golang', got %q", results[0].Entry.Key)
+	}
+}
+
+func TestFTSRebuildRecoversTruncatedIndex(t *testing.T) {
+	dir := t.TempDir()
+
+	db, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Store("item1", "alpha beta gamma", "core", "")
+	db.Store("item2", "delta epsilon zeta", "core", "")
+
+	// Corrupt FTS by dropping it manually
+	db.db.Exec("DROP TABLE IF EXISTS memories_fts")
+	db.Close()
+
+	// Reopen should rebuild FTS and searches should work again
+	db2, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db2.Close()
+
+	results, err := db2.Search("alpha", 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after FTS recovery, got %d", len(results))
+	}
+}
+
+// === Fix #9: updated_at and category indexes ===
+
+func TestIndexesExist(t *testing.T) {
+	db := openTestDB(t)
+
+	indexes := make(map[string]bool)
+	rows, err := db.db.Query("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		rows.Scan(&name)
+		indexes[name] = true
+	}
+
+	if !indexes["idx_memories_updated_at"] {
+		t.Error("missing index idx_memories_updated_at")
+	}
+	if !indexes["idx_memories_category"] {
+		t.Error("missing index idx_memories_category")
+	}
+	if !indexes["idx_memories_owner"] {
+		t.Error("missing index idx_memories_owner")
+	}
+}
+
+// === Fix #11: parseTime returns safe fallback ===
+
+func TestParseTimeSQLiteFormat(t *testing.T) {
+	result := parseTime("2026-01-15 10:30:00")
+	if result.Year() != 2026 || result.Month() != 1 || result.Day() != 15 {
+		t.Fatalf("failed to parse sqlite format: %v", result)
+	}
+}
+
+func TestParseTimeRFC3339(t *testing.T) {
+	result := parseTime("2026-01-15T10:30:00Z")
+	if result.Year() != 2026 || result.Month() != 1 || result.Day() != 15 {
+		t.Fatalf("failed to parse RFC3339 format: %v", result)
+	}
+}
+
+func TestParseTimeRFC3339WithOffset(t *testing.T) {
+	result := parseTime("2026-01-15T10:30:00+07:00")
+	if result.Year() != 2026 || result.Month() != 1 || result.Day() != 15 {
+		t.Fatalf("failed to parse RFC3339 with offset: %v", result)
+	}
+}
+
+func TestParseTimeEmptyString(t *testing.T) {
+	before := time.Now().UTC()
+	result := parseTime("")
+	after := time.Now().UTC()
+
+	// Should return approximately now, not zero
+	if result.IsZero() {
+		t.Fatal("parseTime('') should not return zero time")
+	}
+	if result.Before(before) || result.After(after) {
+		t.Fatalf("parseTime('') should return ~now, got %v (expected between %v and %v)", result, before, after)
+	}
+}
+
+func TestParseTimeGarbageInput(t *testing.T) {
+	before := time.Now().UTC()
+	result := parseTime("not-a-timestamp")
+	after := time.Now().UTC()
+
+	// Should return approximately now, not zero
+	if result.IsZero() {
+		t.Fatal("parseTime with bad input should not return zero time")
+	}
+	if result.Before(before) || result.After(after) {
+		t.Fatalf("parseTime with bad input should return ~now, got %v", result)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -346,14 +347,16 @@ func (cb *ContextBuilder) buildGraphMemoryContext(userMessage, owner string, see
 		return ""
 	}
 
-	// Find which entities appear in the user message (case-insensitive substring match)
+	// Find which entities appear in the user message using word boundary matching
+	// to avoid false positives (e.g., entity "Go" matching "going").
 	msgLower := strings.ToLower(userMessage)
 	var matched []string
 	for _, name := range entityNames {
-		if len(name) < 2 {
-			continue // skip very short names to avoid false matches
+		if len(name) < 3 {
+			continue // skip short names to avoid false matches
 		}
-		if strings.Contains(msgLower, strings.ToLower(name)) {
+		nameLower := strings.ToLower(name)
+		if containsWord(msgLower, nameLower) {
 			matched = append(matched, name)
 		}
 	}
@@ -361,8 +364,8 @@ func (cb *ContextBuilder) buildGraphMemoryContext(userMessage, owner string, see
 		return ""
 	}
 
-	// Walk the graph from matched entities
-	nodes, err := cb.memoryDB.WalkGraph(matched, 2, 15)
+	// Walk the graph from matched entities (owner-scoped to prevent leaking private data)
+	nodes, err := cb.memoryDB.WalkGraphForOwner(matched, 2, 15, owner)
 	if err != nil || len(nodes) == 0 {
 		return ""
 	}
@@ -417,6 +420,34 @@ func (cb *ContextBuilder) buildGraphMemoryContext(userMessage, owner string, see
 		})
 
 	return sb.String()
+}
+
+// containsWord checks if needle appears in haystack at a word boundary.
+// Both inputs must be lowercase. A word boundary is a non-alphanumeric rune
+// or the start/end of the string.
+func containsWord(haystack, needle string) bool {
+	if needle == "" || haystack == "" {
+		return false
+	}
+	idx := 0
+	for {
+		pos := strings.Index(haystack[idx:], needle)
+		if pos < 0 {
+			return false
+		}
+		pos += idx
+		end := pos + len(needle)
+
+		// Check left boundary
+		leftOK := pos == 0 || !unicode.IsLetter(rune(haystack[pos-1])) && !unicode.IsDigit(rune(haystack[pos-1]))
+		// Check right boundary
+		rightOK := end == len(haystack) || !unicode.IsLetter(rune(haystack[end])) && !unicode.IsDigit(rune(haystack[end]))
+
+		if leftOK && rightOK {
+			return true
+		}
+		idx = pos + 1
+	}
 }
 
 func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID, owner string) []providers.Message {

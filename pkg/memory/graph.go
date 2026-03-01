@@ -2,6 +2,7 @@ package memory
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -122,6 +123,9 @@ func (m *MemoryDB) FindEntities(names []string) ([]Entity, error) {
 		}
 		entities = append(entities, e)
 	}
+	if err := rows.Err(); err != nil {
+		return entities, fmt.Errorf("find entities: %w", err)
+	}
 	return entities, nil
 }
 
@@ -140,6 +144,9 @@ func (m *MemoryDB) AllEntityNames() ([]string, error) {
 			continue
 		}
 		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return names, fmt.Errorf("list entity names: %w", err)
 	}
 	return names, nil
 }
@@ -216,19 +223,149 @@ func (m *MemoryDB) WalkGraph(entityNames []string, maxHops, maxNodes int) ([]Gra
 		}
 	}
 
-	// Collect results
+	// Collect results sorted by depth then entity ID for deterministic ordering
 	result := make([]GraphNode, 0, len(visited))
 	for _, node := range visited {
 		result = append(result, *node)
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Depth != result[j].Depth {
+			return result[i].Depth < result[j].Depth
+		}
+		return result[i].Entity.ID < result[j].Entity.ID
+	})
 	return result, nil
 }
 
+// WalkGraphForOwner performs owner-scoped BFS. Only traverses relations whose
+// memory_key links to a memory accessible by the given owner (shared or owned).
+// When owner is empty, behaves identically to WalkGraph (no filtering).
+func (m *MemoryDB) WalkGraphForOwner(entityNames []string, maxHops, maxNodes int, owner string) ([]GraphNode, error) {
+	if owner == "" {
+		return m.WalkGraph(entityNames, maxHops, maxNodes)
+	}
+
+	seeds, err := m.FindEntities(entityNames)
+	if err != nil {
+		return nil, err
+	}
+	if len(seeds) == 0 {
+		return nil, nil
+	}
+
+	// Pre-load the set of memory keys accessible to this owner
+	accessibleKeys, err := m.accessibleMemoryKeys(owner)
+	if err != nil {
+		return nil, err
+	}
+
+	visited := make(map[int64]*GraphNode)
+	var queue []struct {
+		id    int64
+		depth int
+	}
+
+	for _, s := range seeds {
+		node := &GraphNode{Entity: s, Depth: 0}
+		visited[s.ID] = node
+		queue = append(queue, struct {
+			id    int64
+			depth int
+		}{s.ID, 0})
+	}
+
+	for len(queue) > 0 && len(visited) < maxNodes {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current.depth >= maxHops {
+			continue
+		}
+
+		rels, err := m.getRelationsForEntity(current.id)
+		if err != nil {
+			continue
+		}
+
+		// Filter relations to only those accessible to the owner
+		var filtered []Relation
+		for _, rel := range rels {
+			if rel.MemoryKey == "" || accessibleKeys[rel.MemoryKey] {
+				filtered = append(filtered, rel)
+			}
+		}
+		visited[current.id].Relations = filtered
+
+		for _, rel := range filtered {
+			neighborID := rel.TargetID
+			if rel.TargetID == current.id {
+				neighborID = rel.SourceID
+			}
+
+			if _, seen := visited[neighborID]; seen {
+				continue
+			}
+			if len(visited) >= maxNodes {
+				break
+			}
+
+			entity, err := m.getEntityByID(neighborID)
+			if err != nil {
+				continue
+			}
+
+			nextDepth := current.depth + 1
+			node := &GraphNode{Entity: *entity, Depth: nextDepth}
+			visited[neighborID] = node
+			queue = append(queue, struct {
+				id    int64
+				depth int
+			}{neighborID, nextDepth})
+		}
+	}
+
+	result := make([]GraphNode, 0, len(visited))
+	for _, node := range visited {
+		result = append(result, *node)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Depth != result[j].Depth {
+			return result[i].Depth < result[j].Depth
+		}
+		return result[i].Entity.ID < result[j].Entity.ID
+	})
+	return result, nil
+}
+
+// accessibleMemoryKeys returns the set of memory keys accessible to the given owner
+// (shared entries + that owner's entries).
+func (m *MemoryDB) accessibleMemoryKeys(owner string) (map[string]bool, error) {
+	rows, err := m.db.Query("SELECT key FROM memories WHERE owner = '' OR owner = ?", owner)
+	if err != nil {
+		return nil, fmt.Errorf("accessible memory keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			continue
+		}
+		keys[key] = true
+	}
+	if err := rows.Err(); err != nil {
+		return keys, fmt.Errorf("accessible memory keys: %w", err)
+	}
+	return keys, nil
+}
+
 // CleanStaleRelations removes relations whose memory_key no longer exists in the memories table.
+// Handles both NULL and empty-string memory_key values.
 func (m *MemoryDB) CleanStaleRelations() (int, error) {
 	result, err := m.db.Exec(`
 		DELETE FROM relations
-		WHERE memory_key IS NOT NULL
+		WHERE memory_key IS NOT NULL AND memory_key != ''
 		  AND memory_key NOT IN (SELECT key FROM memories)
 	`)
 	if err != nil {
@@ -278,6 +415,9 @@ func (m *MemoryDB) getRelationsForEntity(entityID int64) ([]Relation, error) {
 		}
 		r.CreatedAt = parseTime(createdAt)
 		rels = append(rels, r)
+	}
+	if err := rows.Err(); err != nil {
+		return rels, err
 	}
 	return rels, nil
 }

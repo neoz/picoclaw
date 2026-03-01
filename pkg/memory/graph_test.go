@@ -509,6 +509,210 @@ func TestRetentionCleansOrphans(t *testing.T) {
 	}
 }
 
+// === Fix #5: Owner-scoped graph traversal ===
+
+func TestWalkGraphForOwnerFiltersPrivate(t *testing.T) {
+	db := openTestDB(t)
+
+	// Shared memory with relation
+	db.Store("team_info", "Alice works on PicoClaw", "core", "")
+	db.AddRelation("Alice", "works_on", "PicoClaw", "team_info")
+
+	// Private memory owned by bob with relation
+	db.Store("bob_secret", "Bob has a secret project", "core", "bob")
+	db.AddRelation("Bob", "works_on", "SecretProject", "bob_secret")
+
+	// Alice should see shared graph but NOT bob's private relations
+	nodes, err := db.WalkGraphForOwner([]string{"Alice"}, 2, 20, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nameSet := nodeNames(nodes)
+	if !nameSet["Alice"] {
+		t.Fatal("expected Alice")
+	}
+	if !nameSet["PicoClaw"] {
+		t.Fatal("expected PicoClaw (via shared memory)")
+	}
+	if nameSet["SecretProject"] {
+		t.Fatal("SecretProject should NOT be reachable for alice (bob's private memory)")
+	}
+}
+
+func TestWalkGraphForOwnerEmptyOwnerUnfiltered(t *testing.T) {
+	db := openTestDB(t)
+
+	db.Store("m1", "fact 1", "core", "bob")
+	db.AddRelation("A", "knows", "B", "m1")
+
+	// Empty owner = no filtering (admin mode)
+	nodes, err := db.WalkGraphForOwner([]string{"A"}, 1, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameSet := nodeNames(nodes)
+	if !nameSet["A"] || !nameSet["B"] {
+		t.Fatal("expected both A and B with empty owner (no filtering)")
+	}
+}
+
+func TestWalkGraphForOwnerSharedMemories(t *testing.T) {
+	db := openTestDB(t)
+
+	// Shared memory is accessible to everyone
+	db.Store("shared_fact", "shared info", "core", "")
+	db.AddRelation("X", "links_to", "Y", "shared_fact")
+
+	nodes, err := db.WalkGraphForOwner([]string{"X"}, 1, 10, "anyone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameSet := nodeNames(nodes)
+	if !nameSet["X"] || !nameSet["Y"] {
+		t.Fatal("expected both X and Y (shared memory accessible to all)")
+	}
+}
+
+func TestWalkGraphForOwnerRelationWithoutMemoryKey(t *testing.T) {
+	db := openTestDB(t)
+
+	// Relation with empty memory_key should always be traversable
+	db.AddRelation("A", "knows", "B", "")
+
+	nodes, err := db.WalkGraphForOwner([]string{"A"}, 1, 10, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nameSet := nodeNames(nodes)
+	if !nameSet["A"] || !nameSet["B"] {
+		t.Fatal("relations without memory_key should be traversable by anyone")
+	}
+}
+
+// === Fix #6: CleanStaleRelations handles empty string memory_key ===
+
+func TestCleanStaleRelationsEmptyStringKey(t *testing.T) {
+	db := openTestDB(t)
+
+	// Relation with empty string memory_key (not NULL)
+	db.AddRelation("A", "knows", "B", "")
+	// Relation with a valid memory_key that exists
+	db.Store("valid_key", "content", "core", "")
+	db.AddRelation("C", "uses", "D", "valid_key")
+	// Relation with a stale memory_key (no matching memory)
+	db.AddRelation("E", "sees", "F", "nonexistent_key")
+
+	cleaned, err := db.CleanStaleRelations()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should clean the stale key but NOT the empty string key
+	if cleaned != 1 {
+		t.Fatalf("expected 1 stale relation cleaned, got %d", cleaned)
+	}
+
+	// Empty string relation should survive
+	aID, _ := db.UpsertEntity("A", "")
+	rels, _ := db.getRelationsForEntity(aID)
+	if len(rels) != 1 {
+		t.Fatalf("expected empty-key relation to survive, got %d relations", len(rels))
+	}
+
+	// Valid key relation should survive
+	cID, _ := db.UpsertEntity("C", "")
+	rels, _ = db.getRelationsForEntity(cID)
+	if len(rels) != 1 {
+		t.Fatalf("expected valid-key relation to survive, got %d relations", len(rels))
+	}
+}
+
+func TestCleanStaleRelationsNullKey(t *testing.T) {
+	db := openTestDB(t)
+
+	// Insert a relation with actual NULL memory_key via raw SQL
+	srcID, _ := db.UpsertEntity("P", "thing")
+	tgtID, _ := db.UpsertEntity("Q", "thing")
+	db.db.Exec("INSERT INTO relations (source_id, relation, target_id, memory_key) VALUES (?, ?, ?, NULL)",
+		srcID, "links", tgtID)
+
+	cleaned, err := db.CleanStaleRelations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// NULL key relations should not be cleaned
+	if cleaned != 0 {
+		t.Fatalf("expected 0 cleaned (NULL key should be preserved), got %d", cleaned)
+	}
+}
+
+// === Fix #10: Deterministic WalkGraph ordering ===
+
+func TestWalkGraphDeterministicOrder(t *testing.T) {
+	db := openTestDB(t)
+
+	// Build a graph with multiple nodes at various depths
+	db.AddRelation("Root", "connects", "Child1", "m1")
+	db.AddRelation("Root", "connects", "Child2", "m2")
+	db.AddRelation("Root", "connects", "Child3", "m3")
+	db.AddRelation("Child1", "connects", "Grandchild1", "m4")
+
+	// Run walk multiple times - order should be consistent
+	var firstOrder []string
+	for i := 0; i < 5; i++ {
+		nodes, err := db.WalkGraph([]string{"Root"}, 2, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var names []string
+		for _, n := range nodes {
+			names = append(names, n.Entity.Name)
+		}
+
+		if i == 0 {
+			firstOrder = names
+		} else {
+			if len(names) != len(firstOrder) {
+				t.Fatalf("run %d: different node count: %v vs %v", i, names, firstOrder)
+			}
+			for j := range names {
+				if names[j] != firstOrder[j] {
+					t.Fatalf("run %d: non-deterministic order at position %d: %v vs %v", i, j, names, firstOrder)
+				}
+			}
+		}
+	}
+}
+
+func TestWalkGraphDepthOrderedFirst(t *testing.T) {
+	db := openTestDB(t)
+
+	// Chain: A -> B -> C
+	db.AddRelation("A", "knows", "B", "m1")
+	db.AddRelation("B", "knows", "C", "m2")
+
+	nodes, err := db.WalkGraph([]string{"A"}, 2, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(nodes))
+	}
+	// Depth 0 should come before depth 1 which should come before depth 2
+	if nodes[0].Depth != 0 {
+		t.Fatalf("first node should be depth 0, got %d", nodes[0].Depth)
+	}
+	if nodes[1].Depth != 1 {
+		t.Fatalf("second node should be depth 1, got %d", nodes[1].Depth)
+	}
+	if nodes[2].Depth != 2 {
+		t.Fatalf("third node should be depth 2, got %d", nodes[2].Depth)
+	}
+}
+
 // helpers
 
 func nodeNames(nodes []GraphNode) map[string]bool {

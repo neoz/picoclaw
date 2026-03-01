@@ -35,7 +35,7 @@ func (m *MemoryDB) MigrateFromMarkdown(memoryDir string) error {
 	}
 
 	// Migrate daily notes (memory/YYYYMM/YYYYMMDD.md)
-	filepath.Walk(memoryDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(memoryDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
@@ -63,7 +63,9 @@ func (m *MemoryDB) MigrateFromMarkdown(memoryDir string) error {
 		key := fmt.Sprintf("legacy_daily_%s", name)
 		m.Store(key, content, "daily", "")
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("walk memory dir: %w", err)
+	}
 
 	// Also check for MEMORY_SNAPSHOT.md to hydrate if DB was empty before migration
 	snapshotFile := filepath.Join(memoryDir, "MEMORY_SNAPSHOT.md")
@@ -169,14 +171,9 @@ func (m *MemoryDB) migrateAddOwner() error {
 }
 
 // rebuildFTS drops and recreates the FTS index from the memories table.
-// This repairs corruption caused by out-of-sync FTS triggers.
-// Gated by metadata flag so the full rebuild only runs once.
+// This runs on every startup to self-heal any FTS corruption caused by
+// crashes, power loss, or out-of-sync triggers.
 func (m *MemoryDB) rebuildFTS() error {
-	var done string
-	if err := m.db.QueryRow("SELECT value FROM metadata WHERE key = ?", metaFTSRebuilt).Scan(&done); err == nil && done == "true" {
-		return nil
-	}
-
 	// Drop triggers first
 	for _, name := range []string{"memories_ai", "memories_ad", "memories_au"} {
 		if _, err := m.db.Exec("DROP TRIGGER IF EXISTS " + name); err != nil {
@@ -205,8 +202,7 @@ func (m *MemoryDB) rebuildFTS() error {
 		}
 	}
 
-	_, err := m.db.Exec("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, 'true')", metaFTSRebuilt)
-	return err
+	return nil
 }
 
 // migrateDeduplicateKeys removes duplicate entries where the same key exists

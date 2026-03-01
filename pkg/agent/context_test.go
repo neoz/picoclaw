@@ -232,3 +232,81 @@ func TestBuildSystemPrompt_SeparatorsBetweenSections(t *testing.T) {
 		t.Error("sections should be separated by --- delimiter")
 	}
 }
+
+// === Fix #3: containsWord with word boundary matching ===
+
+func TestContainsWordExactMatch(t *testing.T) {
+	if !containsWord("hello world", "hello") {
+		t.Error("should match 'hello' at start")
+	}
+	if !containsWord("hello world", "world") {
+		t.Error("should match 'world' at end")
+	}
+	if !containsWord("the quick fox", "quick") {
+		t.Error("should match 'quick' in middle")
+	}
+}
+
+func TestContainsWordSingleWord(t *testing.T) {
+	if !containsWord("alice", "alice") {
+		t.Error("should match entire string")
+	}
+}
+
+func TestContainsWordNoFalseSubstring(t *testing.T) {
+	if containsWord("going forward", "go") {
+		t.Error("'go' should NOT match inside 'going'")
+	}
+	if containsWord("algorithm design", "algo") {
+		t.Error("'algo' should NOT match inside 'algorithm'")
+	}
+	if containsWord("picoclaw is great", "claw") {
+		t.Error("'claw' should NOT match inside 'picoclaw'")
+	}
+}
+
+func TestContainsWordWithPunctuation(t *testing.T) {
+	if !containsWord("hello, alice!", "alice") {
+		t.Error("should match 'alice' next to punctuation")
+	}
+	if !containsWord("(alice) is here", "alice") {
+		t.Error("should match 'alice' inside parens")
+	}
+	if !containsWord("ask alice.", "alice") {
+		t.Error("should match 'alice' before period")
+	}
+}
+
+func TestContainsWordMultipleOccurrences(t *testing.T) {
+	// First occurrence is substring, second is word
+	if !containsWord("going to go home", "go") {
+		t.Error("should match standalone 'go' even if earlier substring 'going' exists")
+	}
+}
+
+func TestContainsWordNoMatch(t *testing.T) {
+	if containsWord("hello world", "xyz") {
+		t.Error("should not match absent word")
+	}
+}
+
+func TestContainsWordDigitBoundary(t *testing.T) {
+	if containsWord("v2release", "release") {
+		t.Error("'release' should NOT match when preceded by digit without space")
+	}
+	if !containsWord("v2 release", "release") {
+		t.Error("should match 'release' after space")
+	}
+}
+
+func TestContainsWordEmptyInputs(t *testing.T) {
+	if containsWord("", "test") {
+		t.Error("should not match in empty haystack")
+	}
+	if containsWord("test", "") {
+		t.Error("should not match empty needle")
+	}
+	if containsWord("", "") {
+		t.Error("should not match when both empty")
+	}
+}

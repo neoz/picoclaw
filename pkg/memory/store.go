@@ -9,6 +9,7 @@ import (
 
 // Store inserts or updates a memory entry. The key is globally unique:
 // any existing entry with the same key (regardless of owner) is replaced.
+// When updating an existing key, the original created_at is preserved.
 func (m *MemoryDB) Store(key, content, category, owner string) error {
 	category = validateCategory(category)
 	now := time.Now().UTC().Format(sqliteTimeFormat)
@@ -18,6 +19,13 @@ func (m *MemoryDB) Store(key, content, category, owner string) error {
 		return fmt.Errorf("store memory: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Preserve created_at from any existing entry with this key.
+	var createdAt string
+	err = tx.QueryRow("SELECT created_at FROM memories WHERE key = ? LIMIT 1", key).Scan(&createdAt)
+	if err != nil || createdAt == "" {
+		createdAt = now
+	}
 
 	// Delete any existing entries with this key (all owners) to prevent
 	// duplicates from the UNIQUE(key, owner) constraint allowing
@@ -29,7 +37,7 @@ func (m *MemoryDB) Store(key, content, category, owner string) error {
 	if _, err := tx.Exec(`
 		INSERT INTO memories (key, content, category, owner, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, key, content, category, owner, now, now); err != nil {
+	`, key, content, category, owner, createdAt, now); err != nil {
 		return fmt.Errorf("store memory: %w", err)
 	}
 	return tx.Commit()
@@ -153,6 +161,9 @@ func (m *MemoryDB) List(category string, limit int, owner string) ([]MemoryEntry
 		entry.UpdatedAt = parseTime(updatedAt)
 		entries = append(entries, entry)
 	}
+	if err := rows.Err(); err != nil {
+		return entries, fmt.Errorf("list memories: %w", err)
+	}
 	return entries, nil
 }
 
@@ -206,6 +217,9 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string
 		entry.CreatedAt = parseTime(createdAt)
 		entry.UpdatedAt = parseTime(updatedAt)
 		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return entries, fmt.Errorf("list recent memories: %w", err)
 	}
 	return entries, nil
 }

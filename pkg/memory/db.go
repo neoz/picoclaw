@@ -3,6 +3,7 @@ package memory
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,9 +16,8 @@ const sqliteTimeFormat = "2006-01-02 15:04:05"
 
 // Migration metadata keys.
 const (
-	metaMigratedMarkdown  = "migrated_markdown"
-	metaDeduplicatedKeys  = "deduplicated_keys"
-	metaFTSRebuilt        = "fts_rebuilt_v1"
+	metaMigratedMarkdown = "migrated_markdown"
+	metaDeduplicatedKeys = "deduplicated_keys"
 )
 
 // fts5CreateTable is the DDL for the FTS5 virtual table, shared between
@@ -87,6 +87,12 @@ func Open(workspace string) (*MemoryDB, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	// Wait up to 5s for locks instead of failing immediately with SQLITE_BUSY
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
 	}
 
 	// Enable foreign keys for cascade deletes (graph relations)
@@ -163,6 +169,8 @@ func (m *MemoryDB) createSchema() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_memories_owner ON memories(owner);
+	CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
+	CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
 
 	CREATE TABLE IF NOT EXISTS metadata (
 		key   TEXT PRIMARY KEY,
@@ -183,15 +191,24 @@ func (m *MemoryDB) createSchema() error {
 	return nil
 }
 
-// parseTime parses a timestamp string, trying sqliteTimeFormat first then RFC3339.
+// parseTime parses a timestamp string, trying common formats.
+// Returns time.Now() on failure to prevent zero timestamps from causing
+// incorrect retention cleanup (entries appearing infinitely old).
 func parseTime(s string) time.Time {
+	if s == "" {
+		return time.Now().UTC()
+	}
 	if t, err := time.Parse(sqliteTimeFormat, s); err == nil {
 		return t
 	}
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
 		return t
 	}
-	return time.Time{}
+	if t, err := time.Parse("2006-01-02T15:04:05-07:00", s); err == nil {
+		return t
+	}
+	log.Printf("[memory] warning: unparseable timestamp %q, defaulting to now", s)
+	return time.Now().UTC()
 }
 
 // validateCategory checks if the category is valid, defaults to "core".
