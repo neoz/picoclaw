@@ -128,13 +128,32 @@ You are picoclaw, a helpful AI assistant.
 ## Workspace
 Your workspace is at: %s
 - Skills: %s/skills/{skill-name}/SKILL.md
-
-## Important Rules
-
-1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
-
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.`,
+`,
 		now, runtime, workspacePath, workspacePath)
+}
+
+func (cb *ContextBuilder) BuildOperational() string	 {
+	var sb strings.Builder
+	/*
+	## Operational Guidelines
+- Do NOT retry a tool call with identical parameters if it failed. Try a different approach.
+- If a tool returns an error, analyze the error before calling it again.
+- Prefer targeted, specific tool calls over broad ones.
+- Plan your approach before executing multiple tool calls.
+- If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.
+- Never call the same tool more than 3 times with the same parameters.
+- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.";
+
+	*/
+	sb.WriteString("## Operational Guidelines\n\n")
+	sb.WriteString("- Do NOT retry a tool call with identical parameters if it failed. Try a different approach.\n")
+	sb.WriteString("- If a tool returns an error, analyze the error before calling it again.\n")
+	sb.WriteString("- Prefer targeted, specific tool calls over broad ones.\n")
+	sb.WriteString("- Plan your approach before executing multiple tool calls.\n")
+	sb.WriteString("- If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.\n")
+	sb.WriteString("- Never call the same tool more than 3 times with the same parameters.\n")
+	sb.WriteString("- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.\n")
+	return sb.String()
 }
 
 func (cb *ContextBuilder) BuildSafety() string {
@@ -165,6 +184,9 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	if bootstrapContent != "" {
 		parts = append(parts, bootstrapContent)
 	}
+
+	operationalContent := cb.BuildOperational()
+	parts = append(parts, operationalContent)
 
 	safetyContent := cb.BuildSafety()
 	parts = append(parts, safetyContent)
