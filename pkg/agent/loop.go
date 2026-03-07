@@ -53,6 +53,7 @@ type processOptions struct {
 	SendResponse    bool              // Whether to send response via bus
 	Metadata        map[string]string // Original inbound message metadata
 	Owner           string            // Memory owner (username for scoped access)
+	Media           []string          // Media file paths (images, etc.)
 }
 
 func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error) {
@@ -378,6 +379,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		SendResponse:    false,
 		Metadata:        msg.Metadata,
 		Owner:           resolveOwner(msg.Metadata),
+		Media:           msg.Media,
 	})
 }
 
@@ -490,7 +492,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		history,
 		summary,
 		opts.UserMessage,
-		nil,
+		opts.Media,
 		opts.Channel,
 		opts.ChatID,
 		opts.Owner,

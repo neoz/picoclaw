@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -522,12 +523,56 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 	// slices in the middle of a tool call sequence).
 	messages = append(messages, sanitizeHistory(history)...)
 
-	messages = append(messages, providers.Message{
-		Role:    "user",
-		Content: currentMessage,
-	})
+	// Build user message: multimodal if images are present, plain text otherwise
+	userMsg := providers.Message{Role: "user"}
+	imageParts := buildImageParts(media)
+	if len(imageParts) > 0 {
+		parts := []providers.ContentPart{{Type: "text", Text: currentMessage}}
+		parts = append(parts, imageParts...)
+		userMsg.ContentParts = parts
+		userMsg.Content = currentMessage
+	} else {
+		userMsg.Content = currentMessage
+	}
+	messages = append(messages, userMsg)
 
 	return messages
+}
+
+// imageExtensions maps supported image file extensions to MIME types.
+var imageExtensions = map[string]string{
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+}
+
+// buildImageParts reads image files from media paths and returns ContentParts
+// with base64-encoded data URLs. Non-image files are skipped.
+func buildImageParts(media []string) []providers.ContentPart {
+	var parts []providers.ContentPart
+	for _, path := range media {
+		ext := strings.ToLower(filepath.Ext(path))
+		mime, ok := imageExtensions[ext]
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			logger.WarnCF("agent", "Failed to read image file",
+				map[string]interface{}{"path": path, "error": err.Error()})
+			continue
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		parts = append(parts, providers.ContentPart{
+			Type: "image_url",
+			ImageURL: &providers.ImageURL{
+				URL: fmt.Sprintf("data:%s;base64,%s", mime, encoded),
+			},
+		})
+	}
+	return parts
 }
 
 // sanitizeHistory removes orphaned tool-related messages from session history.
