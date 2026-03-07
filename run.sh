@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 SECRET_KEY_FILE="$SCRIPT_DIR/.secret_key"
 SKILLS_DIR="/home/picoclaw/.picoclaw/workspace/skills"
-ACTION="run"
+ACTION=""
 BUILD=false
 CLEAN=false
 
@@ -19,7 +19,7 @@ for arg in "$@"; do
         --clean|-c) CLEAN=true ;;
         --stop|-s) ACTION="stop" ;;
         --restart|-r) ACTION="restart" ;;
-        --force|-f) BUILD=true; CLEAN=true ;;
+        --force|-f) BUILD=true; CLEAN=true; ACTION="restart" ;;
         --help|-h) ACTION="help" ;;
         skills-list) ACTION="skills-list" ;;
         skills-import) ACTION="skills-import" ;;
@@ -28,12 +28,21 @@ for arg in "$@"; do
     esac
 done
 
+# Default action: "run" if no action specified and not build-only
+if [ -z "$ACTION" ]; then
+    if [ "$BUILD" = true ]; then
+        ACTION="build"
+    else
+        ACTION="run"
+    fi
+fi
+
 # --help: display usage
 if [ "$ACTION" = "help" ]; then
     echo "Usage: ./run.sh [options] [command]"
     echo ""
     echo "Options:"
-    echo "  --build, -b           Force rebuild Docker image"
+    echo "  --build, -b           Build Docker image (without restarting service)"
     echo "  --clean, -c           Remove workspace volume before run"
     echo "  --stop, -s            Stop the container"
     echo "  --restart, -r         Stop and restart the container"
@@ -50,7 +59,7 @@ if [ "$ACTION" = "help" ]; then
     echo ""
     echo "Examples:"
     echo "  ./run.sh                          Run the container"
-    echo "  ./run.sh --build                  Rebuild and run"
+    echo "  ./run.sh --build                  Build image only"
     echo "  ./run.sh --restart --build        Rebuild and restart"
     echo "  ./run.sh skills-list              List installed skills"
     echo "  ./run.sh skills-import ./weather  Import a skill"
@@ -149,6 +158,18 @@ if [ "$ACTION" = "stop" ]; then
     exit 0
 fi
 
+# Build image if requested or missing
+if [ "$BUILD" = true ] || ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+    echo "Building image..."
+    docker build -t "$IMAGE_NAME" .
+fi
+
+# Build-only: exit after building without stopping the service
+if [ "$ACTION" = "build" ]; then
+    echo "Image built successfully."
+    exit 0
+fi
+
 # --restart: stop then run again
 if [ "$ACTION" = "restart" ]; then
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -157,12 +178,6 @@ if [ "$ACTION" = "restart" ]; then
         docker rm -f "$CONTAINER_NAME"
     fi
     ACTION="run"
-fi
-
-# --build: force rebuild image
-if [ "$BUILD" = true ] || ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
-    echo "Building image..."
-    docker build -t "$IMAGE_NAME" .
 fi
 
 # Remove existing container if it exists
