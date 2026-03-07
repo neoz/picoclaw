@@ -311,6 +311,20 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		if replyText == "" {
 			replyText = message.ReplyToMessage.Caption
 		}
+
+		// Download photo from the replied-to message
+		if message.ReplyToMessage.Photo != nil && len(message.ReplyToMessage.Photo) > 0 {
+			replyPhoto := message.ReplyToMessage.Photo[len(message.ReplyToMessage.Photo)-1]
+			replyPhotoPath := c.downloadPhoto(ctx, replyPhoto.FileID)
+			if replyPhotoPath != "" {
+				mediaPaths = append(mediaPaths, replyPhotoPath)
+				if replyText != "" {
+					replyText += "\n"
+				}
+				replyText += fmt.Sprintf("[image: %s]", replyPhotoPath)
+			}
+		}
+
 		if replyText != "" {
 			replyFrom := message.ReplyToMessage.From.Username
 			if replyFrom == "" {
