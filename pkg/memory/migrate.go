@@ -170,6 +170,50 @@ func (m *MemoryDB) migrateAddOwner() error {
 	return tx.Commit()
 }
 
+// migrateAddConfidence adds confidence and access_count columns to existing databases.
+func (m *MemoryDB) migrateAddConfidence() error {
+	rows, err := m.db.Query("PRAGMA table_info(memories)")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	hasConfidence := false
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == "confidence" {
+			hasConfidence = true
+		}
+	}
+
+	if hasConfidence {
+		return nil
+	}
+
+	// Check if memories table exists
+	var tableExists int
+	m.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memories'").Scan(&tableExists)
+	if tableExists == 0 {
+		return nil
+	}
+
+	// Add columns with defaults
+	if _, err := m.db.Exec("ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0"); err != nil {
+		return fmt.Errorf("add confidence column: %w", err)
+	}
+	if _, err := m.db.Exec("ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("add access_count column: %w", err)
+	}
+	return nil
+}
+
 // rebuildFTS drops and recreates the FTS index from the memories table.
 // This runs on every startup to self-heal any FTS corruption caused by
 // crashes, power loss, or out-of-sync triggers.

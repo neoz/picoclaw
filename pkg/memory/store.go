@@ -46,13 +46,14 @@ func (m *MemoryDB) Store(key, content, category, owner string) error {
 // Get retrieves a memory entry by key. Returns nil if not found.
 func (m *MemoryDB) Get(key string) *MemoryEntry {
 	row := m.db.QueryRow(`
-		SELECT id, key, content, category, owner, created_at, updated_at
+		SELECT id, key, content, category, owner, confidence, access_count, created_at, updated_at
 		FROM memories WHERE key = ?
 	`, key)
 
 	var entry MemoryEntry
 	var createdAt, updatedAt string
-	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt)
+	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner,
+		&entry.Confidence, &entry.AccessCount, &createdAt, &updatedAt)
 	if err != nil {
 		return nil
 	}
@@ -103,13 +104,14 @@ func (m *MemoryDB) DeleteAccessible(key, owner string) bool {
 // GetByOwner retrieves a memory entry by key and owner. Returns nil if not found.
 func (m *MemoryDB) GetByOwner(key, owner string) *MemoryEntry {
 	row := m.db.QueryRow(`
-		SELECT id, key, content, category, owner, created_at, updated_at
+		SELECT id, key, content, category, owner, confidence, access_count, created_at, updated_at
 		FROM memories WHERE key = ? AND owner = ?
 	`, key, owner)
 
 	var entry MemoryEntry
 	var createdAt, updatedAt string
-	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt)
+	err := row.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner,
+		&entry.Confidence, &entry.AccessCount, &createdAt, &updatedAt)
 	if err != nil {
 		return nil
 	}
@@ -137,7 +139,7 @@ func (m *MemoryDB) List(category string, limit int, owner string) ([]MemoryEntry
 		args = append(args, owner)
 	}
 
-	query := "SELECT id, key, content, category, owner, created_at, updated_at FROM memories"
+	query := "SELECT id, key, content, category, owner, confidence, access_count, created_at, updated_at FROM memories"
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -154,7 +156,8 @@ func (m *MemoryDB) List(category string, limit int, owner string) ([]MemoryEntry
 	for rows.Next() {
 		var entry MemoryEntry
 		var createdAt, updatedAt string
-		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner,
+			&entry.Confidence, &entry.AccessCount, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		entry.CreatedAt = parseTime(createdAt)
@@ -195,7 +198,7 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string
 	}
 	args = append(args, limit)
 
-	query := fmt.Sprintf(`SELECT id, key, content, category, owner, created_at, updated_at
+	query := fmt.Sprintf(`SELECT id, key, content, category, owner, confidence, access_count, created_at, updated_at
 		FROM memories
 		WHERE category IN (%s) AND updated_at >= ?%s
 		ORDER BY updated_at DESC LIMIT ?`,
@@ -211,7 +214,8 @@ func (m *MemoryDB) ListRecent(categories []string, days, limit int, owner string
 	for rows.Next() {
 		var entry MemoryEntry
 		var createdAt, updatedAt string
-		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.Key, &entry.Content, &entry.Category, &entry.Owner,
+			&entry.Confidence, &entry.AccessCount, &createdAt, &updatedAt); err != nil {
 			continue
 		}
 		entry.CreatedAt = parseTime(createdAt)
@@ -236,4 +240,14 @@ func (m *MemoryDB) CountByCategory(category string) int {
 	var count int
 	m.db.QueryRow("SELECT COUNT(*) FROM memories WHERE category = ?", category).Scan(&count)
 	return count
+}
+
+// IncrementAccessCount atomically increments the access_count for the given entry IDs.
+func (m *MemoryDB) IncrementAccessCount(ids []int64) {
+	if len(ids) == 0 {
+		return
+	}
+	for _, id := range ids {
+		m.db.Exec("UPDATE memories SET access_count = access_count + 1 WHERE id = ?", id)
+	}
 }

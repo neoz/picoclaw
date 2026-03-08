@@ -3,12 +3,14 @@ package memory
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
-// SearchResult represents a search hit with its BM25 rank.
+// SearchResult represents a search hit with its BM25 rank and decayed confidence.
 type SearchResult struct {
-	Entry MemoryEntry
-	Rank  float64
+	Entry          MemoryEntry
+	Rank           float64
+	DecayedConfidence float64 // Confidence after time decay + access boost
 }
 
 // Search performs FTS5 full-text search with BM25 ranking.
@@ -27,8 +29,8 @@ func (m *MemoryDB) Search(query string, limit int, owner string) ([]SearchResult
 	var args []interface{}
 	if owner != "" {
 		sqlQuery = `
-			SELECT m.id, m.key, m.content, m.category, m.owner, m.created_at, m.updated_at,
-				rank
+			SELECT m.id, m.key, m.content, m.category, m.owner, m.confidence, m.access_count,
+				m.created_at, m.updated_at, rank
 			FROM memories_fts
 			JOIN memories m ON memories_fts.rowid = m.id
 			WHERE memories_fts MATCH ? AND (m.owner = '' OR m.owner = ?)
@@ -37,8 +39,8 @@ func (m *MemoryDB) Search(query string, limit int, owner string) ([]SearchResult
 		args = []interface{}{ftsQuery, owner, limit}
 	} else {
 		sqlQuery = `
-			SELECT m.id, m.key, m.content, m.category, m.owner, m.created_at, m.updated_at,
-				rank
+			SELECT m.id, m.key, m.content, m.category, m.owner, m.confidence, m.access_count,
+				m.created_at, m.updated_at, rank
 			FROM memories_fts
 			JOIN memories m ON memories_fts.rowid = m.id
 			WHERE memories_fts MATCH ?
@@ -53,7 +55,19 @@ func (m *MemoryDB) Search(query string, limit int, owner string) ([]SearchResult
 	}
 	defer rows.Close()
 
-	return scanSearchResults(rows)
+	results, err := scanSearchResults(rows)
+	if err != nil {
+		return results, err
+	}
+
+	// Auto-increment access counts for returned results
+	ids := make([]int64, len(results))
+	for i, r := range results {
+		ids[i] = r.Entry.ID
+	}
+	m.IncrementAccessCount(ids)
+
+	return results, nil
 }
 
 // SearchByCategory performs FTS5 search filtered by category.
@@ -72,8 +86,8 @@ func (m *MemoryDB) SearchByCategory(query, category string, limit int, owner str
 	var args []interface{}
 	if owner != "" {
 		sqlQuery = `
-			SELECT m.id, m.key, m.content, m.category, m.owner, m.created_at, m.updated_at,
-				rank
+			SELECT m.id, m.key, m.content, m.category, m.owner, m.confidence, m.access_count,
+				m.created_at, m.updated_at, rank
 			FROM memories_fts
 			JOIN memories m ON memories_fts.rowid = m.id
 			WHERE memories_fts MATCH ? AND m.category = ? AND (m.owner = '' OR m.owner = ?)
@@ -82,8 +96,8 @@ func (m *MemoryDB) SearchByCategory(query, category string, limit int, owner str
 		args = []interface{}{ftsQuery, category, owner, limit}
 	} else {
 		sqlQuery = `
-			SELECT m.id, m.key, m.content, m.category, m.owner, m.created_at, m.updated_at,
-				rank
+			SELECT m.id, m.key, m.content, m.category, m.owner, m.confidence, m.access_count,
+				m.created_at, m.updated_at, rank
 			FROM memories_fts
 			JOIN memories m ON memories_fts.rowid = m.id
 			WHERE memories_fts MATCH ? AND m.category = ?
@@ -98,7 +112,18 @@ func (m *MemoryDB) SearchByCategory(query, category string, limit int, owner str
 	}
 	defer rows.Close()
 
-	return scanSearchResults(rows)
+	results, err := scanSearchResults(rows)
+	if err != nil {
+		return results, err
+	}
+
+	ids := make([]int64, len(results))
+	for i, r := range results {
+		ids[i] = r.Entry.ID
+	}
+	m.IncrementAccessCount(ids)
+
+	return results, nil
 }
 
 func scanSearchResults(rows interface {
@@ -106,18 +131,25 @@ func scanSearchResults(rows interface {
 	Scan(dest ...interface{}) error
 	Err() error
 }) ([]SearchResult, error) {
+	now := time.Now().UTC()
 	var results []SearchResult
 	for rows.Next() {
 		var result SearchResult
 		var createdAt, updatedAt string
 		if err := rows.Scan(
 			&result.Entry.ID, &result.Entry.Key, &result.Entry.Content,
-			&result.Entry.Category, &result.Entry.Owner, &createdAt, &updatedAt, &result.Rank,
+			&result.Entry.Category, &result.Entry.Owner,
+			&result.Entry.Confidence, &result.Entry.AccessCount,
+			&createdAt, &updatedAt, &result.Rank,
 		); err != nil {
 			continue
 		}
 		result.Entry.CreatedAt = parseTime(createdAt)
 		result.Entry.UpdatedAt = parseTime(updatedAt)
+		result.DecayedConfidence = ComputeConfidence(
+			result.Entry.Confidence, result.Entry.CreatedAt, now,
+			result.Entry.AccessCount, result.Entry.Category,
+		)
 		results = append(results, result)
 	}
 	if err := rows.Err(); err != nil {

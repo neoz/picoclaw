@@ -270,6 +270,8 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 	seenKeys := make(map[string]bool)
 	var parts []string
 
+	now := time.Now().UTC()
+
 	// 1. Core memories (permanent, always included)
 	coreEntries, _ := cb.memoryDB.List("core", 20, owner)
 	if len(coreEntries) > 0 {
@@ -277,6 +279,10 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 		sb.WriteString("## Core Memories\n\n")
 		for _, e := range coreEntries {
 			seenKeys[e.Key] = true
+			conf := memory.ComputeConfidence(e.Confidence, e.CreatedAt, now, e.AccessCount, e.Category)
+			if conf < 0.01 {
+				continue
+			}
 			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
 		}
 		parts = append(parts, sb.String())
@@ -336,6 +342,10 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 					}
 					// Skip conversation category (raw auto-saved messages are noisy)
 					if r.Entry.Category == "conversation" {
+						continue
+					}
+					// Skip entries with very low decayed confidence
+					if r.DecayedConfidence < 0.05 {
 						continue
 					}
 					seenKeys[r.Entry.Key] = true

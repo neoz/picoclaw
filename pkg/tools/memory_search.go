@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/memory"
 )
@@ -78,6 +79,7 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		if len(entries) == 0 {
 			return "No memories found.", nil
 		}
+		now := time.Now().UTC()
 		var b strings.Builder
 		for i, e := range entries {
 			if i > 0 {
@@ -87,8 +89,10 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 			if e.Owner != "" {
 				ownerLabel = "owner:" + e.Owner
 			}
-			b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
+			conf := memory.ComputeConfidence(e.Confidence, e.CreatedAt, now, e.AccessCount, e.Category)
+			b.WriteString(fmt.Sprintf("[%s] (%s) (%s) confidence:%.0f%% updated:%s\n%s",
 				e.Key, e.Category, ownerLabel,
+				conf*100,
 				e.UpdatedAt.Format("2006-01-02"),
 				e.Content,
 			))
@@ -121,10 +125,11 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		if r.Entry.Owner != "" {
 			ownerLabel = "owner:" + r.Entry.Owner
 		}
-		b.WriteString(fmt.Sprintf("[%s] (%s) (%s) updated:%s\n%s",
+		b.WriteString(fmt.Sprintf("[%s] (%s) (%s) confidence:%.0f%% updated:%s\n%s",
 			r.Entry.Key,
 			r.Entry.Category,
 			ownerLabel,
+			r.DecayedConfidence*100,
 			r.Entry.UpdatedAt.Format("2006-01-02"),
 			r.Entry.Content,
 		))

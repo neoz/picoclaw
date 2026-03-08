@@ -46,13 +46,15 @@ var fts5TriggerDDL = []string{
 
 // MemoryEntry represents a single memory record.
 type MemoryEntry struct {
-	ID        int64
-	Key       string
-	Content   string
-	Category  string
-	Owner     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          int64
+	Key         string
+	Content     string
+	Category    string
+	Owner       string
+	Confidence  float64
+	AccessCount int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // ValidCategories defines the allowed memory categories.
@@ -112,6 +114,11 @@ func Open(workspace string) (*MemoryDB, error) {
 		return nil, fmt.Errorf("migrate owner column: %w", err)
 	}
 
+	if err := mdb.migrateAddConfidence(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate confidence columns: %w", err)
+	}
+
 	if err := mdb.createSchema(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -158,13 +165,15 @@ func (m *MemoryDB) Workspace() string {
 func (m *MemoryDB) createSchema() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS memories (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		key        TEXT NOT NULL,
-		content    TEXT NOT NULL,
-		category   TEXT NOT NULL DEFAULT 'core',
-		owner      TEXT NOT NULL DEFAULT '',
-		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-		updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		id           INTEGER PRIMARY KEY AUTOINCREMENT,
+		key          TEXT NOT NULL,
+		content      TEXT NOT NULL,
+		category     TEXT NOT NULL DEFAULT 'core',
+		owner        TEXT NOT NULL DEFAULT '',
+		confidence   REAL NOT NULL DEFAULT 1.0,
+		access_count INTEGER NOT NULL DEFAULT 0,
+		created_at   DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at   DATETIME NOT NULL DEFAULT (datetime('now')),
 		UNIQUE(key, owner)
 	);
 

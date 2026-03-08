@@ -29,12 +29,12 @@ func (t *MemoryStoreTool) Name() string {
 }
 
 func (t *MemoryStoreTool) Description() string {
-	return `Store a memory entry with a unique key. Categories control retention:
-- "core": permanent, never auto-deleted (default)
-- "daily": auto-deleted after 30 days
-- "conversation": auto-deleted after 7 days
-- "custom": auto-deleted after 90 days
-If the key already exists, the content is updated.
+	return `Store a memory entry with a unique key. Categories control decay rate:
+- "core": permanent, never decays (default)
+- "daily": ~30-day half-life
+- "conversation": ~7-day half-life
+- "custom": ~90-day half-life
+Memory confidence decays over time. Frequently accessed memories decay slower. If the key already exists, the content is updated (confidence resets to 1.0).
 
 By default, memories are owned by the current user. Set shared=true to store as shared memory visible to all users (e.g. general knowledge, project facts, shared preferences). Use shared memory for information that is not specific to any single user.
 
