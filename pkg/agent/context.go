@@ -245,7 +245,8 @@ func (cb *ContextBuilder) buildDelegationPrompt() string {
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\nAlways prefer delegating to a specialist when one is available for the task.")
+	sb.WriteString("\nAlways prefer delegating to a specialist when one is available for the task.\n")
+	sb.WriteString("When a delegate returns a result, include the specialist's full response first, then add your own brief commentary or insights after it.")
 	return sb.String()
 }
 
