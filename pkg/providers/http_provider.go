@@ -49,6 +49,7 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	requestBody := map[string]interface{}{
 		"model":    model,
 		"messages": messages,
+		"stream":   false,
 	}
 
 	if len(tools) > 0 {
@@ -155,7 +156,16 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 		Usage *UsageInfo `json:"usage"`
 	}
 
-	if err := json.Unmarshal(body, &apiResponse); err != nil {
+	// Some providers return SSE "data: {...}" format even when stream=false.
+	// Extract the first JSON object from the SSE envelope if needed.
+	parseBody := body
+	if len(parseBody) > 0 && parseBody[0] != '{' && parseBody[0] != '[' {
+		if extracted := extractSSEJSON(parseBody); extracted != nil {
+			parseBody = extracted
+		}
+	}
+
+	if err := json.Unmarshal(parseBody, &apiResponse); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
@@ -243,6 +253,20 @@ func stripThinkTags(s string) string {
 		out = out[idx+len(closeTag):]
 	}
 	return strings.TrimSpace(out)
+}
+
+// extractSSEJSON extracts the first JSON object from an SSE "data: {...}" response.
+func extractSSEJSON(body []byte) []byte {
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			payload := bytes.TrimPrefix(line, []byte("data: "))
+			if len(payload) > 0 && payload[0] == '{' {
+				return payload
+			}
+		}
+	}
+	return nil
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {
