@@ -246,7 +246,7 @@ func (cb *ContextBuilder) buildDelegationPrompt() string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\nAlways prefer delegating to a specialist when one is available for the task.\n")
-	sb.WriteString("When a delegate returns a result, write a brief one-line intro, then include the specialist's full response, then ask the user if they want any changes or refinements.")
+	sb.WriteString("When a delegate returns a result, you MUST include the COMPLETE full response from the specialist without summarizing or modifying it. Write a brief one-line intro, then paste the specialist's full response verbatim, then ask if the user wants any changes.")
 	return sb.String()
 }
 
