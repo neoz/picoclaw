@@ -36,7 +36,7 @@ func NewHTTPProvider(apiKey, apiBase, userAgent string) *HTTPProvider {
 		apiBase:   apiBase,
 		userAgent: userAgent,
 		httpClient: &http.Client{
-			Timeout: 0,
+			Timeout: 3 * time.Minute,
 		},
 	}
 }

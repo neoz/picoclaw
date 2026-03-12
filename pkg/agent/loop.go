@@ -849,6 +849,10 @@ func (al *AgentLoop) RunDelegate(ctx context.Context, agentID, task, channel, ch
 		return "", fmt.Errorf("agent %q not found", agentID)
 	}
 
+	// Enforce a 2-minute timeout on sync delegate calls to prevent blocking the main loop.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
 	sessionKey := fmt.Sprintf("delegate:%s:%s:%d", agentID, chatID, time.Now().UnixMilli())
 
 	return al.runAgentLoop(ctx, inst, processOptions{
