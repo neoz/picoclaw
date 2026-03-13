@@ -102,6 +102,20 @@ type CostSummary struct {
 type ModelStats struct {
 	Model        string  `json:"model"`
 	CostUSD      float64 `json:"cost_usd"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
 	TotalTokens  int     `json:"total_tokens"`
 	RequestCount int     `json:"request_count"`
+}
+
+// RangeStats holds aggregated usage statistics for an arbitrary time range.
+type RangeStats struct {
+	From         time.Time            `json:"from"`
+	To           time.Time            `json:"to"`
+	CostUSD      float64              `json:"cost_usd"`
+	InputTokens  int                  `json:"input_tokens"`
+	OutputTokens int                  `json:"output_tokens"`
+	TotalTokens  int                  `json:"total_tokens"`
+	RequestCount int                  `json:"request_count"`
+	ByModel      map[string]ModelStats `json:"by_model"`
 }

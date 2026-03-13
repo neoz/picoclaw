@@ -234,6 +234,42 @@ func (ct *CostTracker) GetMonthlyCost(year int, month time.Month) float64 {
 	return total
 }
 
+// GetRangeStats returns aggregated usage statistics for records within [from, to).
+func (ct *CostTracker) GetRangeStats(from, to time.Time) RangeStats {
+	stats := RangeStats{
+		From:    from,
+		To:      to,
+		ByModel: make(map[string]ModelStats),
+	}
+	if ct == nil {
+		return stats
+	}
+
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+
+	ct.forEachRecord(func(r CostRecord) {
+		ts := r.Usage.Timestamp
+		if !ts.Before(from) && ts.Before(to) {
+			stats.CostUSD += r.Usage.CostUSD
+			stats.InputTokens += r.Usage.InputTokens
+			stats.OutputTokens += r.Usage.OutputTokens
+			stats.TotalTokens += r.Usage.TotalTokens
+			stats.RequestCount++
+
+			ms := stats.ByModel[r.Usage.Model]
+			ms.Model = r.Usage.Model
+			ms.CostUSD += r.Usage.CostUSD
+			ms.InputTokens += r.Usage.InputTokens
+			ms.OutputTokens += r.Usage.OutputTokens
+			ms.TotalTokens += r.Usage.TotalTokens
+			ms.RequestCount++
+			stats.ByModel[r.Usage.Model] = ms
+		}
+	})
+	return stats
+}
+
 // appendRecord writes a single cost record to the JSONL file.
 func (ct *CostTracker) appendRecord(record CostRecord) error {
 	f, err := os.OpenFile(ct.storagePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
