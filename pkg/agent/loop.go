@@ -499,6 +499,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		opts.Channel,
 		opts.ChatID,
 		opts.Owner,
+		isGroupMessage(opts.Metadata),
 	)
 
 	// 3. Save user message to session

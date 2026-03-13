@@ -143,7 +143,7 @@ func (cb *ContextBuilder) BuildOperational() string	 {
 - Plan your approach before executing multiple tool calls.
 - If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.
 - Never call the same tool more than 3 times with the same parameters.
-- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.";
+- In group chats, if a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY. In direct messages, always respond to the user.";
 
 	*/
 	sb.WriteString("## Operational Guidelines\n\n")
@@ -153,7 +153,7 @@ func (cb *ContextBuilder) BuildOperational() string	 {
 	sb.WriteString("- Plan your approach before executing multiple tool calls.\n")
 	sb.WriteString("- If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.\n")
 	sb.WriteString("- Never call the same tool more than 3 times with the same parameters.\n")
-	sb.WriteString("- If a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY.\n")
+	sb.WriteString("- In group chats, if a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY. In direct messages, always respond to the user.\n")
 	return sb.String()
 }
 
@@ -492,50 +492,52 @@ func containsWord(haystack, needle string) bool {
 	}
 }
 
-func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID, owner string) []providers.Message {
+func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary string, currentMessage string, media []string, channel, chatID, owner string, isGroup bool) []providers.Message {
 	messages := []providers.Message{}
 
+	// Static system prompt (stable across calls for prefix caching)
 	systemPrompt := cb.BuildSystemPrompt()
-
-	// Append relevance-filtered memory context (full prompt always, lightweight only if "memory" opted in)
-	if cb.instructions == "" || cb.contextSections["memory"] {
-		memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner)
-		if memoryContext != "" {
-			systemPrompt += "\n\n---\n\n" + memoryContext
-		}
-	}
-
-	// Add Current Session info if provided
-	if channel != "" && chatID != "" {
-		systemPrompt += fmt.Sprintf("\n\n## Current Session\nChannel: %s\nChat ID: %s", channel, chatID)
-	}
 
 	// Log system prompt summary for debugging (debug mode only)
 	logger.DebugCF("agent", "System prompt built",
 		map[string]interface{}{
-			"total_chars": len(systemPrompt),
-			"total_lines": strings.Count(systemPrompt, "\n") + 1,
+			"total_chars":   len(systemPrompt),
+			"total_lines":   strings.Count(systemPrompt, "\n") + 1,
 			"section_count": strings.Count(systemPrompt, "\n\n---\n\n") + 1,
 		})
-
-	// Log preview of system prompt (avoid logging huge content)
-	preview := systemPrompt
-	if len(preview) > 500 {
-		preview = preview[:500] + "... (truncated)"
-	}
-	logger.DebugCF("agent", "System prompt preview",
-		map[string]interface{}{
-			"preview": preview,
-		})
-
-	if summary != "" {
-		systemPrompt += "\n\n## Summary of Previous Conversation\n\n" + summary
-	}
 
 	messages = append(messages, providers.Message{
 		Role:    "system",
 		Content: systemPrompt,
 	})
+
+	// Dynamic context (separate system message so the static prompt stays cacheable)
+	var dynamicParts []string
+
+	if cb.instructions == "" || cb.contextSections["memory"] {
+		if memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner); memoryContext != "" {
+			dynamicParts = append(dynamicParts, memoryContext)
+		}
+	}
+
+	if channel != "" && chatID != "" {
+		chatType := "direct message"
+		if isGroup {
+			chatType = "group chat"
+		}
+		dynamicParts = append(dynamicParts, fmt.Sprintf("## Current Session\nChannel: %s\nChat ID: %s\nChat type: %s", channel, chatID, chatType))
+	}
+
+	if summary != "" {
+		dynamicParts = append(dynamicParts, "## Summary of Previous Conversation\n\n"+summary)
+	}
+
+	if len(dynamicParts) > 0 {
+		messages = append(messages, providers.Message{
+			Role:    "system",
+			Content: strings.Join(dynamicParts, "\n\n---\n\n"),
+		})
+	}
 
 	// Sanitize history to remove orphaned tool messages that would cause
 	// "tool_call_id is not found" API errors (e.g. after TruncateHistory
@@ -687,7 +689,54 @@ func sanitizeHistory(history []providers.Message) []providers.Message {
 		}
 	}
 
+	// Pass 6: compress old consumed messages (tool results and assistant
+	// responses) that have been followed by a newer final assistant response.
+	// Truncates to reduce input tokens on subsequent calls.
+	merged = compressOldMessages(merged, 200)
+
 	return merged
+}
+
+// compressOldMessages truncates tool results and long assistant responses in
+// history that have already been consumed. Only the most recent final assistant
+// response (and any pending tool results) are kept in full. This dramatically
+// reduces input tokens for conversations with many tool calls or verbose responses.
+func compressOldMessages(messages []providers.Message, maxChars int) []providers.Message {
+	// Find the last "final" assistant message (no tool calls, has content).
+	// Everything before it is considered consumed.
+	lastFinalAssistant := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" && len(messages[i].ToolCalls) == 0 && messages[i].Content != "" {
+			lastFinalAssistant = i
+			break
+		}
+	}
+	if lastFinalAssistant < 0 {
+		return messages
+	}
+
+	result := make([]providers.Message, len(messages))
+	copy(result, messages)
+	for i := 0; i < lastFinalAssistant; i++ {
+		msg := result[i]
+		switch {
+		case msg.Role == "tool" && len([]rune(msg.Content)) > maxChars:
+			runes := []rune(msg.Content)
+			result[i] = providers.Message{
+				Role:       "tool",
+				Content:    string(runes[:maxChars]) + "\n... (truncated)",
+				ToolCallID: msg.ToolCallID,
+			}
+		case msg.Role == "assistant" && len(msg.ToolCalls) == 0 && len([]rune(msg.Content)) > maxChars:
+			// Compress old final assistant responses (already delivered to user)
+			runes := []rune(msg.Content)
+			result[i] = providers.Message{
+				Role:    "assistant",
+				Content: string(runes[:maxChars]) + "\n... (truncated)",
+			}
+		}
+	}
+	return result
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {

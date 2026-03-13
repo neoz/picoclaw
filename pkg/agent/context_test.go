@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 // newTestContextBuilder creates a ContextBuilder with a temp workspace (no real files).
@@ -119,7 +121,7 @@ func TestBuildSystemPrompt_DelegationOmittedWhenNoSubagents(t *testing.T) {
 func TestBuildMessages_MemoryGating_NoInstructions(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	// No instructions = full prompt; memory context should be attempted (no DB, so no crash)
-	msgs := cb.BuildMessages(nil, "", "hello", nil, "test", "123", "")
+	msgs := cb.BuildMessages(nil, "", "hello", nil, "test", "123", "", false)
 
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages (system + user), got %d", len(msgs))
@@ -135,7 +137,7 @@ func TestBuildMessages_MemoryGating_NoInstructions(t *testing.T) {
 func TestBuildMessages_MemoryGating_InstructionsWithoutMemory(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a poet.", []string{"safety"})
-	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "")
+	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "", false)
 
 	system := msgs[0].Content
 	// Should contain instructions and safety, but no memory header
@@ -151,7 +153,7 @@ func TestBuildMessages_MemoryGating_InstructionsWithMemory(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a poet.", []string{"memory"})
 	// No actual memoryDB set, so no memory content - but the code path should be entered without panic
-	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "")
+	msgs := cb.BuildMessages(nil, "", "write a poem", nil, "test", "123", "", false)
 
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
@@ -164,28 +166,60 @@ func TestBuildMessages_MemoryGating_InstructionsWithMemory(t *testing.T) {
 func TestBuildMessages_SessionInfo(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a bot.", nil)
-	msgs := cb.BuildMessages(nil, "", "hi", nil, "telegram", "42", "")
+	msgs := cb.BuildMessages(nil, "", "hi", nil, "telegram", "42", "", false)
 
-	system := msgs[0].Content
-	if !strings.Contains(system, "Channel: telegram") {
-		t.Error("system prompt should include channel info")
+	// Session info should be in the dynamic context message (second system message),
+	// not in the static system prompt (first), to keep the static prompt cacheable.
+	if len(msgs) < 2 {
+		t.Fatal("expected at least 2 messages (static system + dynamic context)")
 	}
-	if !strings.Contains(system, "Chat ID: 42") {
-		t.Error("system prompt should include chat ID")
+	if strings.Contains(msgs[0].Content, "Channel: telegram") {
+		t.Error("static system prompt should NOT include channel info")
+	}
+	dynamic := msgs[1].Content
+	if !strings.Contains(dynamic, "Channel: telegram") {
+		t.Error("dynamic context should include channel info")
+	}
+	if !strings.Contains(dynamic, "Chat ID: 42") {
+		t.Error("dynamic context should include chat ID")
+	}
+	if !strings.Contains(dynamic, "Chat type: direct message") {
+		t.Error("dynamic context should include chat type for DM")
+	}
+}
+
+func TestBuildMessages_SessionInfo_GroupChat(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	cb.SetInstructions("You are a bot.", nil)
+	msgs := cb.BuildMessages(nil, "", "hi", nil, "telegram", "42", "", true)
+
+	if len(msgs) < 2 {
+		t.Fatal("expected at least 2 messages")
+	}
+	dynamic := msgs[1].Content
+	if !strings.Contains(dynamic, "Chat type: group chat") {
+		t.Errorf("dynamic context should include group chat type, got %q", dynamic)
 	}
 }
 
 func TestBuildMessages_SummaryAppended(t *testing.T) {
 	cb := newTestContextBuilder(t)
 	cb.SetInstructions("You are a bot.", nil)
-	msgs := cb.BuildMessages(nil, "Previous discussion about weather.", "hi", nil, "", "", "")
+	msgs := cb.BuildMessages(nil, "Previous discussion about weather.", "hi", nil, "", "", "", false)
 
-	system := msgs[0].Content
-	if !strings.Contains(system, "Summary of Previous Conversation") {
-		t.Error("system prompt should include summary section")
+	// Summary should be in the dynamic context message, not the static system prompt.
+	if len(msgs) < 2 {
+		t.Fatal("expected at least 2 messages (static system + dynamic context)")
 	}
-	if !strings.Contains(system, "Previous discussion about weather.") {
-		t.Error("system prompt should include summary content")
+	if strings.Contains(msgs[0].Content, "Summary of Previous Conversation") {
+		t.Error("static system prompt should NOT include summary")
+	}
+	dynamic := msgs[1].Content
+	if !strings.Contains(dynamic, "Summary of Previous Conversation") {
+		t.Error("dynamic context should include summary section")
+	}
+	if !strings.Contains(dynamic, "Previous discussion about weather.") {
+		t.Error("dynamic context should include summary content")
 	}
 }
 
@@ -308,5 +342,179 @@ func TestContainsWordEmptyInputs(t *testing.T) {
 	}
 	if containsWord("", "") {
 		t.Error("should not match when both empty")
+	}
+}
+
+// --- compressOldMessages ---
+
+func TestCompressOldToolResults_TruncatesConsumedResults(t *testing.T) {
+	longResult := strings.Repeat("A poem about BIDV. ", 100) // ~1900 chars
+	messages := []providers.Message{
+		{Role: "user", Content: "write a poem"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: longResult, ToolCallID: "tc1"},
+		{Role: "assistant", Content: "Here is the poem!"}, // final response - marks tc1 as consumed
+		{Role: "user", Content: "hello"},
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	// Tool result at index 2 should be truncated
+	if len([]rune(result[2].Content)) > 220 { // 200 + "... (truncated)"
+		t.Errorf("consumed tool result should be truncated, got %d chars", len(result[2].Content))
+	}
+	if !strings.Contains(result[2].Content, "truncated") {
+		t.Error("truncated result should contain truncation marker")
+	}
+	// ToolCallID must be preserved
+	if result[2].ToolCallID != "tc1" {
+		t.Errorf("ToolCallID lost, got %q", result[2].ToolCallID)
+	}
+}
+
+func TestCompressOldToolResults_KeepsRecentResults(t *testing.T) {
+	longResult := strings.Repeat("X", 500)
+	messages := []providers.Message{
+		{Role: "user", Content: "do something"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: longResult, ToolCallID: "tc1"},
+		// No final assistant response yet - tool result is still "active"
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	// Tool result should NOT be truncated (no final response after it)
+	if result[2].Content != longResult {
+		t.Error("active tool result should not be truncated")
+	}
+}
+
+func TestCompressOldToolResults_MultipleRoundsOnlyOldTruncated(t *testing.T) {
+	oldResult := strings.Repeat("old poem content ", 50)
+	newResult := strings.Repeat("new poem content ", 50)
+
+	messages := []providers.Message{
+		{Role: "user", Content: "poem 1"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: oldResult, ToolCallID: "tc1"},
+		{Role: "assistant", Content: "Here is poem 1"}, // consumed
+		{Role: "user", Content: "poem 2"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc2"}}},
+		{Role: "tool", Content: newResult, ToolCallID: "tc2"},
+		// No final response for tc2 yet
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	// Old result (index 2) should be truncated
+	if len([]rune(result[2].Content)) > 220 {
+		t.Errorf("old tool result should be truncated, got %d chars", len(result[2].Content))
+	}
+	// New result (index 6) should be kept in full
+	if result[6].Content != newResult {
+		t.Error("current tool result should not be truncated")
+	}
+}
+
+func TestCompressOldToolResults_ShortResultsUnchanged(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: "short result", ToolCallID: "tc1"},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "bye"},
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	if result[2].Content != "short result" {
+		t.Error("short tool results should not be modified")
+	}
+}
+
+func TestCompressOldToolResults_NoToolMessages(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	if len(result) != 2 {
+		t.Errorf("expected 2 messages, got %d", len(result))
+	}
+}
+
+func TestCompressOldMessages_CompressesOldAssistantResponses(t *testing.T) {
+	longResponse := strings.Repeat("Here is a very long poem about BIDV. ", 50)
+	messages := []providers.Message{
+		{Role: "user", Content: "write a poem"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: "poem result", ToolCallID: "tc1"},
+		{Role: "assistant", Content: longResponse}, // old final response
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "Hi there!"}, // latest final response
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	// Old assistant response (index 3) should be truncated
+	if len([]rune(result[3].Content)) > 220 {
+		t.Errorf("old assistant response should be truncated, got %d chars", len([]rune(result[3].Content)))
+	}
+	if !strings.Contains(result[3].Content, "truncated") {
+		t.Error("truncated response should contain marker")
+	}
+	// Latest assistant response (index 5) should be kept
+	if result[5].Content != "Hi there!" {
+		t.Errorf("latest response should be unchanged, got %q", result[5].Content)
+	}
+}
+
+func TestCompressOldMessages_KeepsAssistantWithToolCalls(t *testing.T) {
+	messages := []providers.Message{
+		{Role: "user", Content: "do something"},
+		{Role: "assistant", Content: strings.Repeat("X", 500), ToolCalls: []providers.ToolCall{{ID: "tc1"}}},
+		{Role: "tool", Content: "ok", ToolCallID: "tc1"},
+		{Role: "assistant", Content: "done"},
+	}
+
+	result := compressOldMessages(messages, 200)
+
+	// Assistant with tool calls (index 1) should NOT be compressed
+	if len(result[1].Content) != 500 {
+		t.Errorf("assistant with tool calls should not be compressed, got %d chars", len(result[1].Content))
+	}
+}
+
+func TestCompressOldMessages_IntegrationWithSanitize(t *testing.T) {
+	longPoem := strings.Repeat("BIDV vuong vang tua nui cao. ", 100)
+
+	history := []providers.Message{
+		{Role: "user", Content: "write poem about BIDV"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc1", Name: "delegate"}}},
+		{Role: "tool", Content: longPoem, ToolCallID: "tc1"},
+		{Role: "assistant", Content: "Here is the poem: " + longPoem}, // echoes full poem
+		{Role: "user", Content: "write another poem"},
+		{Role: "assistant", Content: "", ToolCalls: []providers.ToolCall{{ID: "tc2", Name: "delegate"}}},
+		{Role: "tool", Content: longPoem, ToolCallID: "tc2"},
+		{Role: "assistant", Content: "Here is poem 2: " + longPoem},
+		{Role: "user", Content: "hello"},
+		{Role: "assistant", Content: "Hi!"},
+	}
+
+	result := sanitizeHistory(history)
+
+	for i, msg := range result {
+		if msg.Role == "tool" && len([]rune(msg.Content)) > 220 {
+			t.Errorf("tool result at index %d should be truncated, got %d chars", i, len([]rune(msg.Content)))
+		}
+	}
+	// Old assistant final responses should also be truncated
+	for i, msg := range result {
+		if msg.Role == "assistant" && len(msg.ToolCalls) == 0 && msg.Content != "" && len([]rune(msg.Content)) > 220 {
+			// Only the last final assistant should be long (but "Hi!" is short)
+			t.Errorf("old assistant response at index %d should be truncated, got %d chars", i, len([]rune(msg.Content)))
+		}
 	}
 }
