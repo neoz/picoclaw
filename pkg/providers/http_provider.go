@@ -170,9 +170,37 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 	}
 
 	if len(apiResponse.Choices) == 0 {
+		// Try Anthropic-style response format: {content: [{type:"text", text:"..."}], usage: {...}}
+		var anthropicResp struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			StopReason string     `json:"stop_reason"`
+			Usage      *UsageInfo `json:"usage"`
+		}
+		if err := json.Unmarshal(parseBody, &anthropicResp); err == nil && len(anthropicResp.Content) > 0 {
+			var text string
+			for _, c := range anthropicResp.Content {
+				if c.Type == "text" {
+					text = c.Text
+					break
+				}
+			}
+			usage := anthropicResp.Usage
+			if usage == nil {
+				usage = apiResponse.Usage
+			}
+			return &LLMResponse{
+				Content:      text,
+				FinishReason: "stop",
+				Usage:        usage,
+			}, nil
+		}
 		return &LLMResponse{
 			Content:      "",
 			FinishReason: "stop",
+			Usage:        apiResponse.Usage,
 		}, nil
 	}
 

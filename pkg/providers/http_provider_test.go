@@ -427,3 +427,89 @@ func TestCreateProviderForModel_ExplicitProviderBypassesPatterns(t *testing.T) {
 		t.Errorf("explicit provider not used: got key %q", hp.apiKey)
 	}
 }
+
+func TestParseResponse_AnthropicFormat(t *testing.T) {
+	p := &HTTPProvider{}
+	body := []byte(`{
+		"id": "msg_123",
+		"type": "message",
+		"role": "assistant",
+		"content": [{"type": "text", "text": "Hello!"}],
+		"stop_reason": "end_turn",
+		"usage": {
+			"input_tokens": 437,
+			"cache_read_input_tokens": 4096,
+			"cache_creation_input_tokens": 0,
+			"output_tokens": 5,
+			"prompt_tokens": 4533,
+			"cached_tokens": 4096,
+			"completion_tokens": 5,
+			"total_tokens": 4538
+		}
+	}`)
+
+	resp, err := p.parseResponse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "Hello!" {
+		t.Errorf("content = %q, want Hello!", resp.Content)
+	}
+	if resp.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	cached := resp.Usage.GetCachedTokens()
+	if cached != 4096 {
+		t.Errorf("cached_tokens = %d, want 4096", cached)
+	}
+}
+
+func TestParseResponse_AnthropicFormat_CacheReadOnly(t *testing.T) {
+	p := &HTTPProvider{}
+	// Provider only reports cache_read_input_tokens, not cached_tokens
+	body := []byte(`{
+		"content": [{"type": "text", "text": "Hi"}],
+		"usage": {
+			"input_tokens": 500,
+			"cache_read_input_tokens": 2048,
+			"output_tokens": 10
+		}
+	}`)
+
+	resp, err := p.parseResponse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "Hi" {
+		t.Errorf("content = %q, want Hi", resp.Content)
+	}
+	if resp.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if resp.Usage.GetCachedTokens() != 2048 {
+		t.Errorf("cached = %d, want 2048", resp.Usage.GetCachedTokens())
+	}
+}
+
+func TestGetCachedTokens_Priority(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage UsageInfo
+		want  int
+	}{
+		{"top-level cached_tokens", UsageInfo{CachedTokens: 100}, 100},
+		{"cache_read_input_tokens", UsageInfo{CacheReadInputTokens: 200}, 200},
+		{"prompt_tokens_details", UsageInfo{PromptTokenDetails: &PromptTokenDetails{CachedTokens: 300}}, 300},
+		{"top-level wins over cache_read", UsageInfo{CachedTokens: 100, CacheReadInputTokens: 200}, 100},
+		{"cache_read wins over details", UsageInfo{CacheReadInputTokens: 200, PromptTokenDetails: &PromptTokenDetails{CachedTokens: 300}}, 200},
+		{"all zero", UsageInfo{}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.usage.GetCachedTokens()
+			if got != tt.want {
+				t.Errorf("GetCachedTokens() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

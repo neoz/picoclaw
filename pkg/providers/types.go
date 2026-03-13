@@ -27,11 +27,13 @@ type LLMResponse struct {
 }
 
 type UsageInfo struct {
-	PromptTokens       int                `json:"prompt_tokens"`
-	CompletionTokens   int                `json:"completion_tokens"`
-	TotalTokens        int                `json:"total_tokens"`
-	CachedTokens       int                `json:"cached_tokens,omitempty"`
-	PromptTokenDetails *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+	PromptTokens             int                `json:"prompt_tokens"`
+	CompletionTokens         int                `json:"completion_tokens"`
+	TotalTokens              int                `json:"total_tokens"`
+	CachedTokens             int                `json:"cached_tokens,omitempty"`
+	CacheReadInputTokens     int                `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int                `json:"cache_creation_input_tokens,omitempty"`
+	PromptTokenDetails       *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
 }
 
 // PromptTokenDetails holds token breakdown from providers like OpenAI.
@@ -40,11 +42,16 @@ type PromptTokenDetails struct {
 }
 
 // GetCachedTokens returns cached token count from whichever field the provider populated.
+// Providers use different field names: cached_tokens (top-level), cache_read_input_tokens
+// (Anthropic-style), or prompt_tokens_details.cached_tokens (OpenAI-style).
 func (u *UsageInfo) GetCachedTokens() int {
 	if u.CachedTokens > 0 {
 		return u.CachedTokens
 	}
-	if u.PromptTokenDetails != nil {
+	if u.CacheReadInputTokens > 0 {
+		return u.CacheReadInputTokens
+	}
+	if u.PromptTokenDetails != nil && u.PromptTokenDetails.CachedTokens > 0 {
 		return u.PromptTokenDetails.CachedTokens
 	}
 	return 0
