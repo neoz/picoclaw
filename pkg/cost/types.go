@@ -17,6 +17,7 @@ type TokenUsage struct {
 	InputTokens  int       `json:"input_tokens"`
 	OutputTokens int       `json:"output_tokens"`
 	TotalTokens  int       `json:"total_tokens"`
+	CachedTokens int       `json:"cached_tokens,omitempty"`
 	CostUSD      float64   `json:"cost_usd"`
 	Timestamp    time.Time `json:"timestamp"`
 }
@@ -29,7 +30,7 @@ func sanitizePrice(v float64) float64 {
 }
 
 // NewTokenUsage creates a TokenUsage with cost calculated from per-million pricing.
-func NewTokenUsage(model string, inputTokens, outputTokens int, inputPricePerMillion, outputPricePerMillion float64) TokenUsage {
+func NewTokenUsage(model string, inputTokens, outputTokens, cachedTokens int, inputPricePerMillion, outputPricePerMillion float64) TokenUsage {
 	inputPricePerMillion = sanitizePrice(inputPricePerMillion)
 	outputPricePerMillion = sanitizePrice(outputPricePerMillion)
 	total := inputTokens + outputTokens
@@ -40,6 +41,7 @@ func NewTokenUsage(model string, inputTokens, outputTokens int, inputPricePerMil
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		TotalTokens:  total,
+		CachedTokens: cachedTokens,
 		CostUSD:      costUSD,
 		Timestamp:    time.Now().UTC(),
 	}
@@ -94,6 +96,7 @@ type CostSummary struct {
 	DailyCostUSD   float64              `json:"daily_cost_usd"`
 	MonthlyCostUSD float64              `json:"monthly_cost_usd"`
 	TotalTokens    int                  `json:"total_tokens"`
+	CachedTokens   int                  `json:"cached_tokens"`
 	RequestCount   int                  `json:"request_count"`
 	ByModel        map[string]ModelStats `json:"by_model"`
 }
@@ -105,6 +108,7 @@ type ModelStats struct {
 	InputTokens  int     `json:"input_tokens"`
 	OutputTokens int     `json:"output_tokens"`
 	TotalTokens  int     `json:"total_tokens"`
+	CachedTokens int     `json:"cached_tokens"`
 	RequestCount int     `json:"request_count"`
 }
 
@@ -116,6 +120,7 @@ type RangeStats struct {
 	InputTokens  int                  `json:"input_tokens"`
 	OutputTokens int                  `json:"output_tokens"`
 	TotalTokens  int                  `json:"total_tokens"`
+	CachedTokens int                  `json:"cached_tokens"`
 	RequestCount int                  `json:"request_count"`
 	ByModel      map[string]ModelStats `json:"by_model"`
 }

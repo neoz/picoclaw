@@ -27,9 +27,27 @@ type LLMResponse struct {
 }
 
 type UsageInfo struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens       int                `json:"prompt_tokens"`
+	CompletionTokens   int                `json:"completion_tokens"`
+	TotalTokens        int                `json:"total_tokens"`
+	CachedTokens       int                `json:"cached_tokens,omitempty"`
+	PromptTokenDetails *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokenDetails holds token breakdown from providers like OpenAI.
+type PromptTokenDetails struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// GetCachedTokens returns cached token count from whichever field the provider populated.
+func (u *UsageInfo) GetCachedTokens() int {
+	if u.CachedTokens > 0 {
+		return u.CachedTokens
+	}
+	if u.PromptTokenDetails != nil {
+		return u.PromptTokenDetails.CachedTokens
+	}
+	return 0
 }
 
 // ContentPart represents a part of a multimodal message (text or image).

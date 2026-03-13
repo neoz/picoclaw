@@ -39,7 +39,7 @@ func TestCostSummaryTool_NilTracker(t *testing.T) {
 
 func TestCostSummaryTool_DefaultOverview(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("test-model", 100, 50)
+	ct.RecordUsage("test-model", 100, 50, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{})
@@ -62,7 +62,7 @@ func TestCostSummaryTool_DefaultOverview(t *testing.T) {
 
 func TestCostSummaryTool_PeriodToday(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-a", 500, 250)
+	ct.RecordUsage("model-a", 500, 250, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -87,7 +87,7 @@ func TestCostSummaryTool_PeriodToday(t *testing.T) {
 
 func TestCostSummaryTool_PeriodMonth(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-a", 100, 50)
+	ct.RecordUsage("model-a", 100, 50, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -155,7 +155,7 @@ func TestCostSummaryTool_InvalidPeriod(t *testing.T) {
 
 func TestCostSummaryTool_LastDays(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-a", 200, 100)
+	ct.RecordUsage("model-a", 200, 100, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -174,7 +174,7 @@ func TestCostSummaryTool_LastDays(t *testing.T) {
 
 func TestCostSummaryTool_LastMonths(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-b", 300, 150)
+	ct.RecordUsage("model-b", 300, 150, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -196,7 +196,7 @@ func TestCostSummaryTool_LastMonths(t *testing.T) {
 
 func TestCostSummaryTool_LastYears(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-c", 100, 50)
+	ct.RecordUsage("model-c", 100, 50, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -212,8 +212,8 @@ func TestCostSummaryTool_LastYears(t *testing.T) {
 
 func TestCostSummaryTool_TokenBreakdownInRange(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("model-a", 500, 250)
-	ct.RecordUsage("model-a", 300, 100)
+	ct.RecordUsage("model-a", 500, 250, 0)
+	ct.RecordUsage("model-a", 300, 100, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -236,9 +236,9 @@ func TestCostSummaryTool_TokenBreakdownInRange(t *testing.T) {
 
 func TestCostSummaryTool_PerModelBreakdownInRange(t *testing.T) {
 	ct := newTestCostTracker(t)
-	ct.RecordUsage("alpha", 100, 50)
-	ct.RecordUsage("beta", 200, 100)
-	ct.RecordUsage("alpha", 300, 150)
+	ct.RecordUsage("alpha", 100, 50, 0)
+	ct.RecordUsage("beta", 200, 100, 0)
+	ct.RecordUsage("alpha", 300, 150, 0)
 
 	tool := NewCostSummaryTool(ct)
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
@@ -275,6 +275,56 @@ func TestCostSummaryTool_ToIntConversions(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("toInt(%v) = %d, want %d", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestCostSummaryTool_CacheHitOverview(t *testing.T) {
+	ct := newTestCostTracker(t)
+	ct.RecordUsage("model-a", 1000, 100, 600)
+
+	tool := NewCostSummaryTool(ct)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "600 cached") {
+		t.Errorf("expected cached tokens in output, got %q", result)
+	}
+	if !strings.Contains(result, "54.5%") {
+		t.Errorf("expected cache rate percentage, got %q", result)
+	}
+}
+
+func TestCostSummaryTool_CacheHitRange(t *testing.T) {
+	ct := newTestCostTracker(t)
+	ct.RecordUsage("model-a", 2000, 200, 1500)
+
+	tool := NewCostSummaryTool(ct)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"period": "today",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "1500 cached") {
+		t.Errorf("expected cached tokens in range output, got %q", result)
+	}
+	if !strings.Contains(result, "68.2%") {
+		t.Errorf("expected cache rate in range output, got %q", result)
+	}
+}
+
+func TestCostSummaryTool_NoCacheHitHidden(t *testing.T) {
+	ct := newTestCostTracker(t)
+	ct.RecordUsage("model-a", 1000, 100, 0)
+
+	tool := NewCostSummaryTool(ct)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result, "cached") {
+		t.Errorf("should not show cached info when zero, got %q", result)
 	}
 }
 

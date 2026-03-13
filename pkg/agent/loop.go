@@ -485,8 +485,11 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 	// 1. Update tool contexts
 	al.updateToolContexts(inst, opts.Channel, opts.ChatID, opts.Owner)
 
-	// 2. Build messages
+	// 2. Build messages (limit history to max_history_messages if configured)
 	history := inst.Sessions.GetHistory(opts.SessionKey)
+	if inst.MaxHistoryMessages > 0 && len(history) > inst.MaxHistoryMessages {
+		history = history[len(history)-inst.MaxHistoryMessages:]
+	}
 	summary := inst.Sessions.GetSummary(opts.SessionKey)
 	messages := inst.ContextBuilder.BuildMessages(
 		history,
@@ -680,7 +683,20 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 
 		// Record usage after successful LLM call
 		if al.costTracker != nil && response.Usage != nil {
-			al.costTracker.RecordUsage(inst.Model, response.Usage.PromptTokens, response.Usage.CompletionTokens)
+			al.costTracker.RecordUsage(inst.Model, response.Usage.PromptTokens, response.Usage.CompletionTokens, response.Usage.GetCachedTokens())
+		}
+
+		// Log token ratio for efficiency monitoring
+		if response.Usage != nil && response.Usage.CompletionTokens > 0 {
+			ratio := float64(response.Usage.PromptTokens) / float64(response.Usage.CompletionTokens)
+			logger.InfoCF("cost", "Token usage",
+				map[string]interface{}{
+					"iteration":     iteration,
+					"input_tokens":  response.Usage.PromptTokens,
+					"output_tokens": response.Usage.CompletionTokens,
+					"ratio":         fmt.Sprintf("%.1f:1", ratio),
+					"cached_tokens": response.Usage.GetCachedTokens(),
+				})
 		}
 
 		// Check if no tool calls - we're done

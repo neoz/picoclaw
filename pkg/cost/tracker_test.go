@@ -65,7 +65,7 @@ func TestNewCostTracker_Nil(t *testing.T) {
 
 func TestRecordUsage_WritesJSONL(t *testing.T) {
 	ct := newTestTracker(t)
-	ct.RecordUsage("test-model", 100, 50)
+	ct.RecordUsage("test-model", 100, 50, 0)
 
 	data, err := os.ReadFile(ct.storagePath)
 	if err != nil {
@@ -88,14 +88,14 @@ func TestRecordUsage_WritesJSONL(t *testing.T) {
 
 func TestRecordUsage_NilTracker(t *testing.T) {
 	var ct *CostTracker
-	ct.RecordUsage("model", 100, 50) // should not panic
+	ct.RecordUsage("model", 100, 50, 0) // should not panic
 }
 
 func TestGetSummary_SessionAggregation(t *testing.T) {
 	ct := newTestTracker(t)
-	ct.RecordUsage("model-a", 100, 50)
-	ct.RecordUsage("model-a", 200, 100)
-	ct.RecordUsage("model-b", 300, 150)
+	ct.RecordUsage("model-a", 100, 50, 0)
+	ct.RecordUsage("model-a", 200, 100, 0)
+	ct.RecordUsage("model-b", 300, 150, 0)
 
 	s := ct.GetSummary()
 	if s.RequestCount != 3 {
@@ -285,6 +285,66 @@ func TestCheckBudget_NilTracker(t *testing.T) {
 	check := ct.CheckBudget(0)
 	if check.Status != BudgetAllowed {
 		t.Error("nil tracker should always allow")
+	}
+}
+
+func TestGetRangeStats_CachedTokens(t *testing.T) {
+	ct := newTestTracker(t)
+
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	// Write records with cached tokens via the writeRecord helper
+	r := CostRecord{
+		ID: newID(),
+		Usage: TokenUsage{
+			Model:        "model-a",
+			InputTokens:  1000,
+			OutputTokens: 100,
+			TotalTokens:  1100,
+			CachedTokens: 600,
+			CostUSD:      0.01,
+			Timestamp:    base,
+		},
+	}
+	if err := ct.appendRecord(r); err != nil {
+		t.Fatal(err)
+	}
+	r2 := CostRecord{
+		ID: newID(),
+		Usage: TokenUsage{
+			Model:        "model-a",
+			InputTokens:  2000,
+			OutputTokens: 200,
+			TotalTokens:  2200,
+			CachedTokens: 1500,
+			CostUSD:      0.02,
+			Timestamp:    base.Add(time.Hour),
+		},
+	}
+	if err := ct.appendRecord(r2); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := ct.GetRangeStats(base, base.AddDate(0, 0, 1))
+	if stats.CachedTokens != 2100 {
+		t.Errorf("cached = %d, want 2100", stats.CachedTokens)
+	}
+	msA := stats.ByModel["model-a"]
+	if msA.CachedTokens != 2100 {
+		t.Errorf("model-a cached = %d, want 2100", msA.CachedTokens)
+	}
+}
+
+func TestRecordUsage_CachedTokens(t *testing.T) {
+	ct := newTestTracker(t)
+	ct.RecordUsage("test-model", 1000, 100, 500)
+
+	s := ct.GetSummary()
+	if s.CachedTokens != 500 {
+		t.Errorf("summary cached = %d, want 500", s.CachedTokens)
+	}
+	ms := s.ByModel["test-model"]
+	if ms.CachedTokens != 500 {
+		t.Errorf("model cached = %d, want 500", ms.CachedTokens)
 	}
 }
 

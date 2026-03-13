@@ -62,13 +62,13 @@ func newID() string {
 }
 
 // RecordUsage records token usage for a model. Never returns an error; logs and continues.
-func (ct *CostTracker) RecordUsage(model string, inputTokens, outputTokens int) {
+func (ct *CostTracker) RecordUsage(model string, inputTokens, outputTokens, cachedTokens int) {
 	if ct == nil {
 		return
 	}
 
 	price := PriceForModel(model, ct.priceOverrides)
-	usage := NewTokenUsage(model, inputTokens, outputTokens, price.Input, price.Output)
+	usage := NewTokenUsage(model, inputTokens, outputTokens, cachedTokens, price.Input, price.Output)
 	record := CostRecord{
 		ID:    newID(),
 		Usage: usage,
@@ -174,16 +174,18 @@ func (ct *CostTracker) GetSummary() CostSummary {
 	ct.ensurePeriodCurrent()
 
 	var sessionCost float64
-	var totalTokens int
+	var totalTokens, cachedTokens int
 	byModel := make(map[string]ModelStats)
 
 	for _, r := range ct.sessionCosts {
 		sessionCost += r.Usage.CostUSD
 		totalTokens += r.Usage.TotalTokens
+		cachedTokens += r.Usage.CachedTokens
 		ms := byModel[r.Usage.Model]
 		ms.Model = r.Usage.Model
 		ms.CostUSD += r.Usage.CostUSD
 		ms.TotalTokens += r.Usage.TotalTokens
+		ms.CachedTokens += r.Usage.CachedTokens
 		ms.RequestCount++
 		byModel[r.Usage.Model] = ms
 	}
@@ -193,6 +195,7 @@ func (ct *CostTracker) GetSummary() CostSummary {
 		DailyCostUSD:   ct.dailyCost,
 		MonthlyCostUSD: ct.monthlyCost,
 		TotalTokens:    totalTokens,
+		CachedTokens:   cachedTokens,
 		RequestCount:   len(ct.sessionCosts),
 		ByModel:        byModel,
 	}
@@ -255,6 +258,7 @@ func (ct *CostTracker) GetRangeStats(from, to time.Time) RangeStats {
 			stats.InputTokens += r.Usage.InputTokens
 			stats.OutputTokens += r.Usage.OutputTokens
 			stats.TotalTokens += r.Usage.TotalTokens
+			stats.CachedTokens += r.Usage.CachedTokens
 			stats.RequestCount++
 
 			ms := stats.ByModel[r.Usage.Model]
@@ -263,6 +267,7 @@ func (ct *CostTracker) GetRangeStats(from, to time.Time) RangeStats {
 			ms.InputTokens += r.Usage.InputTokens
 			ms.OutputTokens += r.Usage.OutputTokens
 			ms.TotalTokens += r.Usage.TotalTokens
+			ms.CachedTokens += r.Usage.CachedTokens
 			ms.RequestCount++
 			stats.ByModel[r.Usage.Model] = ms
 		}

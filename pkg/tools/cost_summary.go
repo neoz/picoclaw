@@ -78,7 +78,12 @@ func (t *CostSummaryTool) executeOverview() (string, error) {
 	summary := t.tracker.GetSummary()
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Session: $%.4f (%d requests, %d tokens)\n", summary.SessionCostUSD, summary.RequestCount, summary.TotalTokens))
+	b.WriteString(fmt.Sprintf("Session: $%.4f (%d requests, %d tokens", summary.SessionCostUSD, summary.RequestCount, summary.TotalTokens))
+	if summary.CachedTokens > 0 {
+		cacheRate := float64(summary.CachedTokens) / float64(summary.TotalTokens) * 100
+		b.WriteString(fmt.Sprintf(", %d cached %.1f%%", summary.CachedTokens, cacheRate))
+	}
+	b.WriteString(")\n")
 	b.WriteString(fmt.Sprintf("Today:   $%.4f\n", summary.DailyCostUSD))
 	b.WriteString(fmt.Sprintf("Month:   $%.4f\n", summary.MonthlyCostUSD))
 
@@ -91,8 +96,12 @@ func (t *CostSummaryTool) executeOverview() (string, error) {
 		sort.Strings(models)
 		for _, name := range models {
 			ms := summary.ByModel[name]
-			b.WriteString(fmt.Sprintf("  %s: $%.4f (%d reqs, %d tokens)\n",
-				ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens))
+			line := fmt.Sprintf("  %s: $%.4f (%d reqs, %d tokens", ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens)
+			if ms.CachedTokens > 0 {
+				cacheRate := float64(ms.CachedTokens) / float64(ms.TotalTokens) * 100
+				line += fmt.Sprintf(", %d cached %.1f%%", ms.CachedTokens, cacheRate)
+			}
+			b.WriteString(line + ")\n")
 		}
 	}
 
@@ -152,8 +161,12 @@ func formatRangeStats(label string, stats cost.RangeStats) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("%s: $%.4f\n", label, stats.CostUSD))
 	b.WriteString(fmt.Sprintf("Requests: %d\n", stats.RequestCount))
-	b.WriteString(fmt.Sprintf("Tokens:   %d total (%d input, %d output)\n",
-		stats.TotalTokens, stats.InputTokens, stats.OutputTokens))
+	tokenLine := fmt.Sprintf("Tokens:   %d total (%d input, %d output", stats.TotalTokens, stats.InputTokens, stats.OutputTokens)
+	if stats.CachedTokens > 0 && stats.TotalTokens > 0 {
+		cacheRate := float64(stats.CachedTokens) / float64(stats.TotalTokens) * 100
+		tokenLine += fmt.Sprintf(", %d cached %.1f%%", stats.CachedTokens, cacheRate)
+	}
+	b.WriteString(tokenLine + ")\n")
 	b.WriteString(fmt.Sprintf("Period:   %s to %s\n",
 		stats.From.Format("2006-01-02"), stats.To.Format("2006-01-02")))
 
@@ -167,8 +180,12 @@ func formatRangeStats(label string, stats cost.RangeStats) string {
 		sort.Strings(models)
 		for _, name := range models {
 			ms := stats.ByModel[name]
-			b.WriteString(fmt.Sprintf("  %s: $%.4f (%d reqs, %d tokens: %d in / %d out)\n",
-				ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens, ms.InputTokens, ms.OutputTokens))
+			line := fmt.Sprintf("  %s: $%.4f (%d reqs, %d tokens: %d in / %d out", ms.Model, ms.CostUSD, ms.RequestCount, ms.TotalTokens, ms.InputTokens, ms.OutputTokens)
+			if ms.CachedTokens > 0 {
+				cacheRate := float64(ms.CachedTokens) / float64(ms.TotalTokens) * 100
+				line += fmt.Sprintf(", %d cached %.1f%%", ms.CachedTokens, cacheRate)
+			}
+			b.WriteString(line + ")\n")
 		}
 	}
 
