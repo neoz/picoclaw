@@ -12,6 +12,13 @@ import (
 	"time"
 )
 
+// urlPattern matches URLs so they can be stripped before filesystem path
+// checking in guardCommand. This prevents URL paths like
+// https://example.com/path or wttr.in/path from being flagged as absolute
+// filesystem paths. Matches both scheme-prefixed URLs and bare domain URLs
+// (e.g. domain.tld/path).
+var urlPattern = regexp.MustCompile(`(?:(?:https?|ftp)://|[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+/)[^\s"']*`)
+
 type ExecTool struct {
 	workingDir          string
 	timeout             time.Duration
@@ -53,7 +60,7 @@ func (t *ExecTool) Name() string {
 }
 
 func (t *ExecTool) Description() string {
-	return "Execute a shell command within the workspace directory. Commands accessing paths outside the workspace are blocked."
+	return "Execute a shell command within the workspace directory. Commands accessing paths outside the workspace are blocked. For fetching web content (weather, news, APIs), prefer the web_fetch tool instead of curl/wget."
 }
 
 func (t *ExecTool) Parameters() map[string]interface{} {
@@ -190,8 +197,12 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			expandedCmd = strings.ReplaceAll(expandedCmd, "${HOME}'", home+"'")
 		}
 
+		// Strip URLs before path extraction so URL paths (e.g. https://example.com/path)
+		// are not mistakenly treated as absolute filesystem paths.
+		strippedCmd := urlPattern.ReplaceAllString(expandedCmd, "")
+
 		pathPattern := regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
-		matches := pathPattern.FindAllString(expandedCmd, -1)
+		matches := pathPattern.FindAllString(strippedCmd, -1)
 
 		for _, raw := range matches {
 			// Allow read-only system virtual filesystems
