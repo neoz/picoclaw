@@ -25,8 +25,9 @@ type AgentInstance struct {
 	MaxIterations  int
 	MaxTokens      int
 	Temperature    float64
-	ContextWindow  int
-	Provider       providers.LLMProvider
+	ContextWindow      int
+	MaxHistoryMessages int
+	Provider           providers.LLMProvider
 	Sessions       *session.SessionManager
 	ContextBuilder *ContextBuilder
 	Tools          *tools.ToolRegistry
@@ -83,6 +84,11 @@ func newAgentInstance(
 	temperature := cfg.Agents.Defaults.Temperature
 	if agentCfg.Temperature != nil {
 		temperature = *agentCfg.Temperature
+	}
+
+	maxHistoryMessages := agentCfg.MaxHistoryMessages
+	if maxHistoryMessages == 0 {
+		maxHistoryMessages = cfg.Agents.Defaults.MaxHistoryMessages
 	}
 
 	name := agentCfg.Name
@@ -188,10 +194,11 @@ func newAgentInstance(
 		Description:    agentCfg.Description,
 		Model:          model,
 		Workspace:      workspace,
-		MaxIterations:  maxIterations,
-		MaxTokens:      maxTokens,
-		Temperature:    temperature,
-		ContextWindow:  maxTokens,
+		MaxIterations:      maxIterations,
+		MaxTokens:          maxTokens,
+		Temperature:        temperature,
+		ContextWindow:      maxTokens,
+		MaxHistoryMessages: maxHistoryMessages,
 		Provider:       provider,
 		Sessions:       sessionsManager,
 		ContextBuilder: contextBuilder,

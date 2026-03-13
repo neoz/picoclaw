@@ -105,8 +105,9 @@ type AgentConfig struct {
 	MaxToolIterations int              `json:"max_tool_iterations,omitempty"`
 	Temperature       *float64         `json:"temperature,omitempty"`
 	Skills            []string         `json:"skills,omitempty"`
-	DeniedTools       []string         `json:"denied_tools,omitempty"`
-	Subagents         *SubagentsConfig `json:"subagents,omitempty"`
+	DeniedTools        []string         `json:"denied_tools,omitempty"`
+	MaxHistoryMessages int              `json:"max_history_messages,omitempty"`
+	Subagents          *SubagentsConfig `json:"subagents,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -119,7 +120,8 @@ type AgentDefaults struct {
 	Provider          string  `json:"provider,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
 	MaxTokens         int     `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
 	Temperature       float64 `json:"temperature" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations int     `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	MaxToolIterations  int     `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	MaxHistoryMessages int     `json:"max_history_messages,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_HISTORY_MESSAGES"`
 }
 
 type ChannelsConfig struct {
@@ -302,7 +304,8 @@ func DefaultConfig() *Config {
 				Model:             "glm-4.7",
 				MaxTokens:         8192,
 				Temperature:       0.7,
-				MaxToolIterations: 20,
+				MaxToolIterations:  20,
+			MaxHistoryMessages: 30,
 			},
 		},
 		Channels: ChannelsConfig{
