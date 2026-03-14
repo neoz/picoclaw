@@ -279,6 +279,77 @@ func TestSessionMessagesTool_InvalidAction(t *testing.T) {
 	}
 }
 
+func TestSessionMessagesTool_RecentSenderNameFilter(t *testing.T) {
+	sm := newTestSessionManager(t)
+	sm.AddToLog("telegram:111", "alice says hi", "u1", "Alice")
+	sm.AddToLog("telegram:111", "bob says hi", "u2", "Bob")
+	sm.AddToLog("telegram:111", "alice again", "u1", "Alice")
+
+	tool := NewSessionMessagesTool(sm)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":      "recent",
+		"session_key": "telegram:111",
+		"sender_name": "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "alice says hi") {
+		t.Errorf("expected alice's message, got %q", result)
+	}
+	if !strings.Contains(result, "alice again") {
+		t.Errorf("expected alice's second message, got %q", result)
+	}
+	if strings.Contains(result, "bob says hi") {
+		t.Errorf("should not contain bob's message, got %q", result)
+	}
+}
+
+func TestSessionMessagesTool_RecentSenderNamePartialMatch(t *testing.T) {
+	sm := newTestSessionManager(t)
+	sm.AddToLog("telegram:111", "msg from alice", "u1", "Alice Smith")
+	sm.AddToLog("telegram:111", "msg from bob", "u2", "Bob Jones")
+
+	tool := NewSessionMessagesTool(sm)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":      "recent",
+		"session_key": "telegram:111",
+		"sender_name": "Smith",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "msg from alice") {
+		t.Errorf("expected alice's message, got %q", result)
+	}
+	if strings.Contains(result, "msg from bob") {
+		t.Errorf("should not contain bob's message, got %q", result)
+	}
+}
+
+func TestSessionMessagesTool_SearchSenderNameFilter(t *testing.T) {
+	sm := newTestSessionManager(t)
+	sm.AddToLog("telegram:111", "the weather is sunny", "u1", "Alice")
+	sm.AddToLog("telegram:111", "weather forecast rain", "u2", "Bob")
+
+	tool := NewSessionMessagesTool(sm)
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":      "search",
+		"session_key": "telegram:111",
+		"query":       "weather",
+		"sender_name": "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "sunny") {
+		t.Errorf("expected alice's weather message, got %q", result)
+	}
+	if strings.Contains(result, "rain") {
+		t.Errorf("should not contain bob's weather message, got %q", result)
+	}
+}
+
 func TestSessionMessagesTool_CrossSessionAccess(t *testing.T) {
 	sm := newTestSessionManager(t)
 	sm.AddToLog("telegram:111", "telegram message", "u1", "Alice")

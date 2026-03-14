@@ -223,8 +223,8 @@ func (sm *SessionManager) AddToLog(key, content, senderID, senderName string) {
 	sm.persistSession(session)
 }
 
-// RecentLog returns the last `limit` log entries filtered by days and senderID.
-func (sm *SessionManager) RecentLog(key string, limit, days int, senderID string) []MessageLogEntry {
+// RecentLog returns the last `limit` log entries filtered by days, senderID, and senderName.
+func (sm *SessionManager) RecentLog(key string, limit, days int, senderID, senderName string) []MessageLogEntry {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -233,15 +233,15 @@ func (sm *SessionManager) RecentLog(key string, limit, days int, senderID string
 		return nil
 	}
 
-	filtered := filterLogEntries(session.MessageLog, days, senderID)
+	filtered := filterLogEntries(session.MessageLog, days, senderID, senderName)
 	if limit > 0 && len(filtered) > limit {
 		filtered = filtered[len(filtered)-limit:]
 	}
 	return filtered
 }
 
-// GetLog returns all log entries filtered by days and senderID (for BM25 search).
-func (sm *SessionManager) GetLog(key string, days int, senderID string) []MessageLogEntry {
+// GetLog returns all log entries filtered by days, senderID, and senderName (for BM25 search).
+func (sm *SessionManager) GetLog(key string, days int, senderID, senderName string) []MessageLogEntry {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -250,19 +250,27 @@ func (sm *SessionManager) GetLog(key string, days int, senderID string) []Messag
 		return nil
 	}
 
-	return filterLogEntries(session.MessageLog, days, senderID)
+	return filterLogEntries(session.MessageLog, days, senderID, senderName)
 }
 
-func filterLogEntries(entries []MessageLogEntry, days int, senderID string) []MessageLogEntry {
+func filterLogEntries(entries []MessageLogEntry, days int, senderID, senderName string) []MessageLogEntry {
 	if days <= 0 || days > messageLogRetentionDays {
 		days = messageLogRetentionDays
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
+	senderNameLower := strings.ToLower(senderName)
 	var filtered []MessageLogEntry
 	for _, e := range entries {
-		if e.Timestamp.After(cutoff) && (senderID == "" || e.SenderID == senderID) {
-			filtered = append(filtered, e)
+		if !e.Timestamp.After(cutoff) {
+			continue
 		}
+		if senderID != "" && e.SenderID != senderID {
+			continue
+		}
+		if senderName != "" && !strings.Contains(strings.ToLower(e.SenderName), senderNameLower) {
+			continue
+		}
+		filtered = append(filtered, e)
 	}
 	return filtered
 }

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -181,5 +182,58 @@ func TestFormatLogEntries_MixedEntries(t *testing.T) {
 	// Both reply entries should use new format
 	if strings.Count(got, "(replying to") != 2 {
 		t.Errorf("expected 2 replying-to headers, got %q", got)
+	}
+}
+
+// --- STMTool sender_name filter ---
+
+func TestSTMTool_RecentSenderNameFilter(t *testing.T) {
+	sm := session.NewSessionManager(t.TempDir())
+	sm.AddToLog("telegram:111", "alice says hi", "u1", "Alice")
+	sm.AddToLog("telegram:111", "bob says hi", "u2", "Bob")
+	sm.AddToLog("telegram:111", "alice again", "u1", "Alice")
+
+	tool := NewSTMTool(sm)
+	tool.SetContext("telegram", "111")
+
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":      "recent",
+		"sender_name": "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "alice says hi") {
+		t.Errorf("expected alice's message, got %q", result)
+	}
+	if !strings.Contains(result, "alice again") {
+		t.Errorf("expected alice's second message, got %q", result)
+	}
+	if strings.Contains(result, "bob says hi") {
+		t.Errorf("should not contain bob's message, got %q", result)
+	}
+}
+
+func TestSTMTool_SearchSenderNameFilter(t *testing.T) {
+	sm := session.NewSessionManager(t.TempDir())
+	sm.AddToLog("telegram:111", "weather is sunny", "u1", "Alice")
+	sm.AddToLog("telegram:111", "weather forecast rain", "u2", "Bob")
+
+	tool := NewSTMTool(sm)
+	tool.SetContext("telegram", "111")
+
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"action":      "search",
+		"query":       "weather",
+		"sender_name": "bob",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "rain") {
+		t.Errorf("expected bob's weather message, got %q", result)
+	}
+	if strings.Contains(result, "sunny") {
+		t.Errorf("should not contain alice's message, got %q", result)
 	}
 }

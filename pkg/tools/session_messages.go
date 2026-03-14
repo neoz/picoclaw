@@ -22,7 +22,7 @@ func (t *SessionMessagesTool) Name() string {
 }
 
 func (t *SessionMessagesTool) Description() string {
-	return "Access messages from any session by specifying a session key. Actions: 'list' returns available session keys, 'recent' returns last N messages from a session (default 10, max 50), 'search' performs BM25-ranked search over a session's messages. Use 'days' to narrow the time window (default 7). Use 'sender_id' to filter by a specific user."
+	return "Access messages from any session by specifying a session key. Actions: 'list' returns available session keys, 'recent' returns last N messages from a session (default 10, max 50), 'search' performs BM25-ranked search over a session's messages. Use 'days' to narrow the time window (default 7). Use 'sender_id' to filter by user ID or 'sender_name' to filter by username (case-insensitive partial match)."
 }
 
 func (t *SessionMessagesTool) Parameters() map[string]interface{} {
@@ -54,6 +54,10 @@ func (t *SessionMessagesTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Filter messages by sender ID",
 			},
+			"sender_name": map[string]interface{}{
+				"type":        "string",
+				"description": "Filter messages by username (case-insensitive partial match)",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -80,6 +84,7 @@ func (t *SessionMessagesTool) Execute(ctx context.Context, args map[string]inter
 			days = int(d)
 		}
 		senderID, _ := args["sender_id"].(string)
+		senderName, _ := args["sender_name"].(string)
 		limit := 10
 		if l, ok := args["limit"].(float64); ok && l > 0 {
 			limit = int(l)
@@ -87,7 +92,7 @@ func (t *SessionMessagesTool) Execute(ctx context.Context, args map[string]inter
 		if limit > 50 {
 			limit = 50
 		}
-		entries := t.sessions.RecentLog(sessionKey, limit, days, senderID)
+		entries := t.sessions.RecentLog(sessionKey, limit, days, senderID, senderName)
 		if len(entries) == 0 {
 			return "No recent messages found.", nil
 		}
@@ -107,7 +112,8 @@ func (t *SessionMessagesTool) Execute(ctx context.Context, args map[string]inter
 			days = int(d)
 		}
 		senderID, _ := args["sender_id"].(string)
-		entries := t.sessions.GetLog(sessionKey, days, senderID)
+		senderName, _ := args["sender_name"].(string)
+		entries := t.sessions.GetLog(sessionKey, days, senderID, senderName)
 		if len(entries) == 0 {
 			return "No matching messages found.", nil
 		}

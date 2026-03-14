@@ -30,7 +30,7 @@ func (t *STMTool) Name() string {
 }
 
 func (t *STMTool) Description() string {
-	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked search over recent messages. Use 'days' to narrow the time window (default 7, set 1 for last day). Use 'sender_id' to filter by a specific user."
+	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked search over recent messages. Use 'days' to narrow the time window (default 7, set 1 for last day). Use 'sender_id' to filter by user ID or 'sender_name' to filter by username (case-insensitive partial match)."
 }
 
 func (t *STMTool) Parameters() map[string]interface{} {
@@ -58,6 +58,10 @@ func (t *STMTool) Parameters() map[string]interface{} {
 				"type":        "string",
 				"description": "Filter messages by sender ID",
 			},
+			"sender_name": map[string]interface{}{
+				"type":        "string",
+				"description": "Filter messages by username (case-insensitive partial match)",
+			},
 		},
 		"required": []string{"action"},
 	}
@@ -81,6 +85,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		days = int(d)
 	}
 	senderID, _ := args["sender_id"].(string)
+	senderName, _ := args["sender_name"].(string)
 
 	switch action {
 	case "recent":
@@ -91,7 +96,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		if limit > 50 {
 			limit = 50
 		}
-		entries := t.sessions.RecentLog(sessionKey, limit, days, senderID)
+		entries := t.sessions.RecentLog(sessionKey, limit, days, senderID, senderName)
 		if len(entries) == 0 {
 			return "No recent messages found.", nil
 		}
@@ -102,7 +107,7 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		if query == "" {
 			return "Error: 'query' parameter is required for search action.", nil
 		}
-		entries := t.sessions.GetLog(sessionKey, days, senderID)
+		entries := t.sessions.GetLog(sessionKey, days, senderID, senderName)
 		if len(entries) == 0 {
 			return "No matching messages found.", nil
 		}
