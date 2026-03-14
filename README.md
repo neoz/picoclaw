@@ -109,14 +109,14 @@ git clone https://github.com/sipeed/picoclaw.git
 cd picoclaw
 make deps
 
-# Build, no need to install
+# Build and install (binary + templates + builtin skills)
+make install
+
+# Or build only (binary in build/ — run `make install` before first use)
 make build
 
 # Build for multiple platforms
 make build-all
-
-# Build And Install
-make install
 ```
 
 ### 🚀 Quick Start
@@ -126,10 +126,11 @@ make install
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM)
 > Web search is **optional** - get free [Brave Search API](https://brave.com/search/api) (2000 free queries/month)
 
-**1. Initialize**
+**1. Install and initialize**
 
 ```bash
-picoclaw onboard
+make install        # installs binary, templates, and builtin skills
+picoclaw onboard    # creates config and workspace from templates
 ```
 
 **2. Configure** (`~/.picoclaw/config.json`)
@@ -139,16 +140,19 @@ picoclaw onboard
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "model": "glm-4.7",
+      "model": "anthropic/claude-sonnet-4",
+      "provider": "openrouter",
       "max_tokens": 8192,
       "temperature": 0.7,
-      "max_tool_iterations": 20
+      "max_tool_iterations": 20,
+      "max_history_messages": 30
     }
   },
   "providers": {
     "openrouter": {
-      "api_key": "xxx",
-      "api_base": "https://openrouter.ai/api/v1"
+      "api_key": "sk-or-v1-xxx",
+      "model_patterns": ["openrouter/", "meta-llama/", "deepseek/", "google/"],
+      "fallback": true
     }
   },
   "tools": {
@@ -513,15 +517,18 @@ The default agent uses the `delegate` tool to invoke specialists synchronously (
   "agents": {
     "defaults": {
       "workspace": "~/.picoclaw/workspace",
-      "model": "glm-4.7",
+      "model": "anthropic/claude-sonnet-4",
+      "provider": "openrouter",
       "max_tokens": 8192,
       "temperature": 0.7,
-      "max_tool_iterations": 20
+      "max_tool_iterations": 20,
+      "max_history_messages": 30
     },
     "list": [
       {
         "id": "main",
         "name": "Orchestrator",
+        "description": "The main agent responsible for orchestrating tasks and delegating to specialist agents",
         "default": true,
         "subagents": {
           "allow_agents": ["planner", "coder", "qa", "security"]
@@ -530,31 +537,53 @@ The default agent uses the `delegate` tool to invoke specialists synchronously (
       {
         "id": "planner",
         "name": "Planner",
+        "description": "Plans and breaks down complex tasks into steps",
         "model": "openai/gpt-4.1",
         "temperature": 0.5,
-        "max_tool_iterations": 5
+        "max_tool_iterations": 5,
+        "skills": ["planning"]
       },
       {
         "id": "coder",
         "name": "Code Assistant",
+        "description": "Writes, reviews, and debugs code",
         "model": "anthropic/claude-sonnet-4",
+        "workspace": "~/.picoclaw/workspace/coder",
         "max_tokens": 16384,
         "temperature": 0.3,
-        "max_tool_iterations": 30
+        "max_tool_iterations": 30,
+        "skills": ["coding"]
       },
       {
         "id": "qa",
         "name": "QA Tester",
+        "description": "Tests functionality and verifies quality",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.2,
-        "max_tool_iterations": 20
+        "max_tool_iterations": 20,
+        "skills": ["testing"]
       },
       {
         "id": "security",
         "name": "Security Reviewer",
+        "description": "Reviews code and configurations for security vulnerabilities",
         "model": "anthropic/claude-sonnet-4",
         "temperature": 0.1,
-        "max_tool_iterations": 15
+        "max_tool_iterations": 15,
+        "skills": ["security"]
+      },
+      {
+        "id": "limited",
+        "name": "Limited Assistant",
+        "denied_tools": ["memory_store", "memory_forget", "exec"]
+      },
+      {
+        "id": "poem",
+        "name": "Poem Specialist",
+        "description": "Writes creative poems in any style",
+        "instructions": "You are a creative poet. Write poems in the requested style. Be expressive and original.",
+        "context": ["identity", "bootstrap", "safety", "skills", "memory"],
+        "denied_tools": ["exec", "write_file", "edit_file"]
       }
     ]
   }
