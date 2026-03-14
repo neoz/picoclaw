@@ -345,6 +345,134 @@ func TestContainsWordEmptyInputs(t *testing.T) {
 	}
 }
 
+// --- GetContextStats ---
+
+func TestGetContextStats_FullPrompt(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	stats := cb.GetContextStats(nil, "", "hello", "", "telegram", "42", false)
+
+	// Full prompt should have identity, operational, safety
+	names := make(map[string]bool)
+	for _, p := range stats.SystemParts {
+		names[p.Name] = true
+		if p.Chars <= 0 || p.Tokens <= 0 {
+			t.Errorf("part %q has zero chars/tokens", p.Name)
+		}
+	}
+	if !names["identity"] {
+		t.Error("missing identity part")
+	}
+	if !names["operational"] {
+		t.Error("missing operational part")
+	}
+	if !names["safety"] {
+		t.Error("missing safety part")
+	}
+}
+
+func TestGetContextStats_InstructionsMode(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	cb.SetInstructions("You are a poet.", []string{"safety"})
+	stats := cb.GetContextStats(nil, "", "hi", "", "", "", false)
+
+	names := make(map[string]bool)
+	for _, p := range stats.SystemParts {
+		names[p.Name] = true
+	}
+	if !names["instructions"] {
+		t.Error("missing instructions part")
+	}
+	if !names["safety"] {
+		t.Error("missing safety part")
+	}
+	if names["identity"] {
+		t.Error("identity should not be included")
+	}
+	if names["operational"] {
+		t.Error("operational should not be included in instructions mode")
+	}
+}
+
+func TestGetContextStats_DynamicParts(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	stats := cb.GetContextStats(nil, "A summary of things.", "hello", "", "telegram", "42", true)
+
+	names := make(map[string]bool)
+	for _, p := range stats.DynamicParts {
+		names[p.Name] = true
+	}
+	if !names["session_info"] {
+		t.Error("missing session_info dynamic part")
+	}
+	if !names["summary"] {
+		t.Error("missing summary dynamic part")
+	}
+}
+
+func TestGetContextStats_NoDynamicWithoutChannelOrSummary(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	stats := cb.GetContextStats(nil, "", "hi", "", "", "", false)
+
+	if len(stats.DynamicParts) != 0 {
+		t.Errorf("expected no dynamic parts, got %d", len(stats.DynamicParts))
+	}
+}
+
+func TestGetContextStats_HistoryTokens(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	history := []providers.Message{
+		{Role: "user", Content: strings.Repeat("a", 400)},
+		{Role: "assistant", Content: strings.Repeat("b", 800)},
+	}
+	stats := cb.GetContextStats(history, "", "hi", "", "", "", false)
+
+	if stats.HistoryCount != 2 {
+		t.Errorf("expected 2 history messages, got %d", stats.HistoryCount)
+	}
+	// 400/4 + 800/4 = 300
+	if stats.HistoryTokens != 300 {
+		t.Errorf("expected 300 history tokens, got %d", stats.HistoryTokens)
+	}
+}
+
+func TestGetContextStats_TotalIncludesAll(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	history := []providers.Message{
+		{Role: "user", Content: strings.Repeat("x", 100)},
+	}
+	stats := cb.GetContextStats(history, "some summary", "hi", "", "tg", "1", false)
+
+	systemSum := 0
+	for _, p := range stats.SystemParts {
+		systemSum += p.Tokens
+	}
+	dynamicSum := 0
+	for _, p := range stats.DynamicParts {
+		dynamicSum += p.Tokens
+	}
+	expected := systemSum + dynamicSum + stats.HistoryTokens
+	if stats.TotalTokens != expected {
+		t.Errorf("total %d != system(%d) + dynamic(%d) + history(%d) = %d",
+			stats.TotalTokens, systemSum, dynamicSum, stats.HistoryTokens, expected)
+	}
+}
+
+func TestGetContextStats_DelegationIncluded(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	cb.SetSubagents([]SubagentInfo{
+		{ID: "poet", Name: "Poet", Description: "Writes poems"},
+	})
+	stats := cb.GetContextStats(nil, "", "hi", "", "", "", false)
+
+	names := make(map[string]bool)
+	for _, p := range stats.SystemParts {
+		names[p.Name] = true
+	}
+	if !names["delegation"] {
+		t.Error("missing delegation part when subagents set")
+	}
+}
+
 // --- compressOldMessages ---
 
 func TestCompressOldToolResults_TruncatesConsumedResults(t *testing.T) {

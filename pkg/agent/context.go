@@ -774,6 +774,117 @@ func (cb *ContextBuilder) loadSkills() string {
 	return "# Skill Definitions\n\n" + content
 }
 
+// ContextPartStat holds token stats for a single context part.
+type ContextPartStat struct {
+	Name   string
+	Chars  int
+	Tokens int // estimated: chars/4
+}
+
+// ContextStats holds token stats for all context parts.
+type ContextStats struct {
+	SystemParts  []ContextPartStat
+	DynamicParts []ContextPartStat
+	ToolsCount   int
+	ToolsTokens  int
+	HistoryCount int
+	HistoryTokens int
+	TotalTokens  int
+}
+
+// estimateTokens returns a rough token estimate (chars/4 heuristic).
+func estimateTokens(s string) int {
+	return len(s) / 4
+}
+
+// GetContextStats builds the system prompt and dynamic parts, returning per-section token stats.
+func (cb *ContextBuilder) GetContextStats(history []providers.Message, summary, currentMessage, owner, channel, chatID string, isGroup bool) ContextStats {
+	var stats ContextStats
+
+	// --- System prompt parts ---
+	if cb.instructions != "" {
+		// Instructions mode
+		stats.SystemParts = append(stats.SystemParts, makeStat("instructions", cb.instructions))
+
+		if cb.contextSections["identity"] {
+			stats.SystemParts = append(stats.SystemParts, makeStat("identity", cb.getIdentity()))
+		}
+		if cb.contextSections["bootstrap"] {
+			if content := cb.LoadBootstrapFiles(); content != "" {
+				stats.SystemParts = append(stats.SystemParts, makeStat("bootstrap", content))
+			}
+		}
+		if cb.contextSections["safety"] {
+			stats.SystemParts = append(stats.SystemParts, makeStat("safety", cb.BuildSafety()))
+		}
+		if cb.contextSections["skills"] {
+			if s := cb.skillsLoader.BuildSkillsSummary(); s != "" {
+				stats.SystemParts = append(stats.SystemParts, makeStat("skills", s))
+			}
+		}
+	} else {
+		// Full prompt mode
+		stats.SystemParts = append(stats.SystemParts, makeStat("identity", cb.getIdentity()))
+		if content := cb.LoadBootstrapFiles(); content != "" {
+			stats.SystemParts = append(stats.SystemParts, makeStat("bootstrap", content))
+		}
+		stats.SystemParts = append(stats.SystemParts, makeStat("operational", cb.BuildOperational()))
+		stats.SystemParts = append(stats.SystemParts, makeStat("safety", cb.BuildSafety()))
+		if s := cb.skillsLoader.BuildSkillsSummary(); s != "" {
+			stats.SystemParts = append(stats.SystemParts, makeStat("skills", s))
+		}
+	}
+
+	if len(cb.subagents) > 0 {
+		stats.SystemParts = append(stats.SystemParts, makeStat("delegation", cb.buildDelegationPrompt()))
+	}
+
+	// --- Dynamic parts ---
+	if cb.instructions == "" || cb.contextSections["memory"] {
+		if memCtx := cb.buildRelevantMemoryContext(currentMessage, owner); memCtx != "" {
+			stats.DynamicParts = append(stats.DynamicParts, makeStat("memory", memCtx))
+		}
+	}
+
+	if channel != "" && chatID != "" {
+		chatType := "direct message"
+		if isGroup {
+			chatType = "group chat"
+		}
+		sessionInfo := fmt.Sprintf("## Current Session\nChannel: %s\nChat ID: %s\nChat type: %s", channel, chatID, chatType)
+		stats.DynamicParts = append(stats.DynamicParts, makeStat("session_info", sessionInfo))
+	}
+
+	if summary != "" {
+		stats.DynamicParts = append(stats.DynamicParts, makeStat("summary", summary))
+	}
+
+	// --- History ---
+	stats.HistoryCount = len(history)
+	for _, m := range history {
+		stats.HistoryTokens += estimateTokens(m.Content)
+	}
+
+	// --- Totals ---
+	for _, p := range stats.SystemParts {
+		stats.TotalTokens += p.Tokens
+	}
+	for _, p := range stats.DynamicParts {
+		stats.TotalTokens += p.Tokens
+	}
+	stats.TotalTokens += stats.HistoryTokens
+
+	return stats
+}
+
+func makeStat(name, content string) ContextPartStat {
+	return ContextPartStat{
+		Name:   name,
+		Chars:  len(content),
+		Tokens: estimateTokens(content),
+	}
+}
+
 // GetSkillsInfo returns information about loaded skills.
 func (cb *ContextBuilder) GetSkillsInfo() map[string]interface{} {
 	allSkills := cb.skillsLoader.ListSkills()

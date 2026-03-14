@@ -341,6 +341,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, inst *AgentInstance, ms
 		return al.processSystemMessage(ctx, inst, msg)
 	}
 
+	// Handle /context diagnostic command (bypass LLM)
+	if strings.TrimSpace(msg.Content) == "/context" {
+		return al.handleContextCommand(inst, msg), nil
+	}
+
 	// In group chats, prepend sender name so the LLM can distinguish users
 	userMessage := msg.Content
 	if isGroupMessage(msg.Metadata) {
@@ -1128,4 +1133,60 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 		total += len(m.Content) / 4 // Simple heuristic: 4 chars per token
 	}
 	return total
+}
+
+// handleContextCommand returns token stats for the system prompt, dynamic parts, tools, and history.
+func (al *AgentLoop) handleContextCommand(inst *AgentInstance, msg bus.InboundMessage) string {
+	history := inst.Sessions.GetHistory(msg.SessionKey)
+	if inst.MaxHistoryMessages > 0 && len(history) > inst.MaxHistoryMessages {
+		history = history[len(history)-inst.MaxHistoryMessages:]
+	}
+	summary := inst.Sessions.GetSummary(msg.SessionKey)
+	owner := resolveOwner(msg.Metadata)
+	isGroup := isGroupMessage(msg.Metadata)
+
+	stats := inst.ContextBuilder.GetContextStats(history, summary, "", owner, msg.Channel, msg.ChatID, isGroup)
+
+	// Tool definitions token estimate
+	toolDefs := inst.Tools.GetDefinitions()
+	stats.ToolsCount = len(toolDefs)
+	toolsJSON, _ := json.Marshal(toolDefs)
+	stats.ToolsTokens = len(toolsJSON) / 4
+	stats.TotalTokens += stats.ToolsTokens
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Context Stats [agent: %s, model: %s]\n", inst.ID, inst.Model))
+	sb.WriteString(fmt.Sprintf("Context window: %d tokens\n\n", inst.ContextWindow))
+
+	sb.WriteString("== System Prompt ==\n")
+	systemTotal := 0
+	for _, p := range stats.SystemParts {
+		sb.WriteString(fmt.Sprintf("  %-16s %6d chars  ~%5d tokens\n", p.Name, p.Chars, p.Tokens))
+		systemTotal += p.Tokens
+	}
+	sb.WriteString(fmt.Sprintf("  %-16s          ~%5d tokens\n", "SUBTOTAL", systemTotal))
+
+	sb.WriteString("\n== Dynamic Parts ==\n")
+	dynamicTotal := 0
+	if len(stats.DynamicParts) == 0 {
+		sb.WriteString("  (none)\n")
+	} else {
+		for _, p := range stats.DynamicParts {
+			sb.WriteString(fmt.Sprintf("  %-16s %6d chars  ~%5d tokens\n", p.Name, p.Chars, p.Tokens))
+			dynamicTotal += p.Tokens
+		}
+		sb.WriteString(fmt.Sprintf("  %-16s          ~%5d tokens\n", "SUBTOTAL", dynamicTotal))
+	}
+
+	sb.WriteString(fmt.Sprintf("\n== Tools ==\n  %d tools          ~%5d tokens\n", stats.ToolsCount, stats.ToolsTokens))
+	sb.WriteString(fmt.Sprintf("\n== History ==\n  %d messages       ~%5d tokens\n", stats.HistoryCount, stats.HistoryTokens))
+
+	sb.WriteString(fmt.Sprintf("\n== Total ==          ~%5d tokens", stats.TotalTokens))
+	if inst.ContextWindow > 0 {
+		pct := float64(stats.TotalTokens) * 100 / float64(inst.ContextWindow)
+		sb.WriteString(fmt.Sprintf(" (%.1f%%)", pct))
+	}
+	sb.WriteString("\n")
+
+	return sb.String()
 }
