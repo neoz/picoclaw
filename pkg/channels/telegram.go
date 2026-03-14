@@ -304,6 +304,17 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		}
 	}
 
+	if message.Sticker != nil {
+		if content != "" {
+			content += "\n"
+		}
+		if message.Sticker.Emoji != "" {
+			content += fmt.Sprintf("[sticker: %s]", message.Sticker.Emoji)
+		} else {
+			content += "[sticker]"
+		}
+	}
+
 	// Include replied-to message content so the agent has context
 	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
 		replyText := message.ReplyToMessage.Text
