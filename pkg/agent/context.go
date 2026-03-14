@@ -143,8 +143,6 @@ func (cb *ContextBuilder) BuildOperational() string	 {
 - Plan your approach before executing multiple tool calls.
 - If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.
 - Never call the same tool more than 3 times with the same parameters.
-- In group chats, if a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY. In direct messages, always respond to the user.";
-
 	*/
 	sb.WriteString("## Operational Guidelines\n\n")
 	sb.WriteString("- Do NOT retry a tool call with identical parameters if it failed. Try a different approach.\n")
@@ -153,7 +151,6 @@ func (cb *ContextBuilder) BuildOperational() string	 {
 	sb.WriteString("- Plan your approach before executing multiple tool calls.\n")
 	sb.WriteString("- If you cannot accomplish a task after a few attempts, explain what went wrong instead of looping.\n")
 	sb.WriteString("- Never call the same tool more than 3 times with the same parameters.\n")
-	sb.WriteString("- In group chats, if a message requires no response (simple acknowledgments, reactions, messages not directed at you), respond with exactly NO_REPLY. In direct messages, always respond to the user.\n")
 	return sb.String()
 }
 
