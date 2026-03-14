@@ -56,7 +56,7 @@ type processOptions struct {
 	Media           []string          // Media file paths (images, etc.)
 }
 
-func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error) {
+func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.CommandExecutor) (*AgentLoop, error) {
 	workspace := cfg.WorkspacePath()
 	os.MkdirAll(workspace, 0755)
 
@@ -117,7 +117,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus) (*AgentLoop, error
 	}
 
 	for _, agentCfg := range agentList {
-		inst, err := newAgentInstance(agentCfg, cfg, shared, memDB, &cfg.Memory, costTracker, msgBus)
+		inst, err := newAgentInstance(agentCfg, cfg, shared, memDB, &cfg.Memory, costTracker, msgBus, executor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create agent %q: %w", agentCfg.ID, err)
 		}

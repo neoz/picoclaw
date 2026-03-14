@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-X main.version=${VERSION}" -o /bin/picocla
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata su-exec
+RUN apk add --no-cache ca-certificates tzdata su-exec docker-cli
 
 RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
 

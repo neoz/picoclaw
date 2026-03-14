@@ -153,6 +153,19 @@
   },
   "tools": {
     "restrict_to_workspace": true,
+    "exec": {
+      "sandbox": "auto",
+      "allowed_commands": [],
+      "docker": {
+        "image": "picoclaw-sandbox:latest",
+        "memory_limit": "256m",
+        "cpu_limit": "0.5",
+        "pids_limit": "100",
+        "network": "none",
+        "read_only_root": true,
+        "volume": ""
+      }
+    },
     "web": {
       "search": {
         "api_key": "YOUR_BRAVE_API_KEY",

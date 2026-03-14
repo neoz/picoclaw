@@ -211,6 +211,7 @@ docker run -d \
     -v "$CONFIG_FILE:/home/picoclaw/.picoclaw/config.json" \
     -v "$SECRET_KEY_FILE:/home/picoclaw/.picoclaw/.secret_key" \
     -v "$VOLUME_NAME:/home/picoclaw/.picoclaw/workspace" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
     -e TZ=Asia/Ho_Chi_Minh \
     "$IMAGE_NAME"
 

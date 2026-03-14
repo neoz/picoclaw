@@ -397,8 +397,14 @@ func agentCmd() {
 		os.Exit(1)
 	}
 
+	executor, err := tools.InitSandbox(cfg.WorkspacePath(), 60*time.Second, cfg.Tools.Exec)
+	if err != nil {
+		fmt.Printf("Error initializing sandbox: %v\n", err)
+		os.Exit(1)
+	}
+
 	msgBus := bus.NewMessageBus()
-	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, executor)
 	if err != nil {
 		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)
@@ -530,8 +536,14 @@ func gatewayCmd() {
 		os.Exit(1)
 	}
 
+	executor, err := tools.InitSandbox(cfg.WorkspacePath(), 60*time.Second, cfg.Tools.Exec)
+	if err != nil {
+		fmt.Printf("Error initializing sandbox: %v\n", err)
+		os.Exit(1)
+	}
+
 	msgBus := bus.NewMessageBus()
-	agentLoop, err := agent.NewAgentLoop(cfg, msgBus)
+	agentLoop, err := agent.NewAgentLoop(cfg, msgBus, executor)
 	if err != nil {
 		fmt.Printf("Error creating agent: %v\n", err)
 		os.Exit(1)

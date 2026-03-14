@@ -1,0 +1,16 @@
+FROM alpine:latest
+
+RUN apk add --no-cache \
+    bash \
+    coreutils \
+    curl \
+    jq \
+    python3 \
+    git \
+    && adduser -D -s /bin/bash sandbox
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/ \
+    && mv /root/.local/bin/uvx /usr/local/bin/
+
+WORKDIR /home/sandbox

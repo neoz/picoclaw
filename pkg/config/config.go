@@ -291,9 +291,26 @@ type WebToolsConfig struct {
 	Ollama OllamaConfig    `json:"ollama"`
 }
 
+type DockerExecConfig struct {
+	Image        string `json:"image" env:"PICOCLAW_TOOLS_EXEC_DOCKER_IMAGE"`
+	MemoryLimit  string `json:"memory_limit" env:"PICOCLAW_TOOLS_EXEC_DOCKER_MEMORY_LIMIT"`
+	CPULimit     string `json:"cpu_limit" env:"PICOCLAW_TOOLS_EXEC_DOCKER_CPU_LIMIT"`
+	PidsLimit    string `json:"pids_limit" env:"PICOCLAW_TOOLS_EXEC_DOCKER_PIDS_LIMIT"`
+	Network      string `json:"network" env:"PICOCLAW_TOOLS_EXEC_DOCKER_NETWORK"`
+	ReadOnlyRoot *bool  `json:"read_only_root" env:"PICOCLAW_TOOLS_EXEC_DOCKER_READ_ONLY_ROOT"`
+	Volume       string `json:"volume" env:"PICOCLAW_TOOLS_EXEC_SANDBOX_VOLUME"`
+}
+
+type ExecToolsConfig struct {
+	Sandbox         string           `json:"sandbox" env:"PICOCLAW_TOOLS_EXEC_SANDBOX"`
+	Docker          DockerExecConfig `json:"docker"`
+	AllowedCommands []string         `json:"allowed_commands"`
+}
+
 type ToolsConfig struct {
-	Web                WebToolsConfig `json:"web"`
-	RestrictToWorkspace *bool         `json:"restrict_to_workspace" env:"PICOCLAW_TOOLS_RESTRICT_TO_WORKSPACE"`
+	Web                 WebToolsConfig   `json:"web"`
+	Exec                ExecToolsConfig  `json:"exec"`
+	RestrictToWorkspace *bool            `json:"restrict_to_workspace" env:"PICOCLAW_TOOLS_RESTRICT_TO_WORKSPACE"`
 }
 
 func DefaultConfig() *Config {
@@ -371,6 +388,9 @@ func DefaultConfig() *Config {
 			Channel:         "telegram",
 		},
 		Tools: ToolsConfig{
+			Exec: ExecToolsConfig{
+				Sandbox: "auto",
+			},
 			Web: WebToolsConfig{
 				Search: WebSearchConfig{
 					APIKey:     "",

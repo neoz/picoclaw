@@ -57,6 +57,7 @@ func newAgentInstance(
 	memoryCfg *config.MemoryConfig,
 	costTracker *cost.CostTracker,
 	msgBus *bus.MessageBus,
+	executor tools.CommandExecutor,
 ) (*AgentInstance, error) {
 	// Resolve values with fallback to defaults
 	model := agentCfg.Model
@@ -137,7 +138,18 @@ func newAgentInstance(
 	registerIfAllowed(tools.NewListDirTool(allowedDir))
 	execTool := tools.NewExecTool(workspace)
 	execTool.SetRestrictToWorkspace(cfg.IsRestrictToWorkspace())
+	if executor != nil {
+		execTool.SetExecutor(executor)
+	}
+	if patterns := cfg.Tools.Exec.AllowedCommands; len(patterns) > 0 {
+		if err := execTool.SetAllowPatterns(patterns); err != nil {
+			return nil, fmt.Errorf("agent %q: invalid allowed_commands pattern: %w", agentCfg.ID, err)
+		}
+	}
 	registerIfAllowed(execTool)
+	if executor != nil {
+		registerIfAllowed(tools.NewRunCodeTool(executor))
+	}
 	registerIfAllowed(tools.NewEditFileTool(allowedDir))
 
 	// Register shared tools

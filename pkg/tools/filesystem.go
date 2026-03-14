@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// checkAllowedDir validates that the resolved path is within the allowed directory.
+// checkAllowedDir validates that the resolved path is within the allowed directory or /tmp.
 func checkAllowedDir(path, allowedDir string) (string, error) {
 	var resolvedPath string
 	if filepath.IsAbs(path) {
@@ -26,12 +26,22 @@ func checkAllowedDir(path, allowedDir string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve allowed directory: %w", err)
 		}
-		if !strings.HasPrefix(resolvedPath, allowedAbs+string(filepath.Separator)) && resolvedPath != allowedAbs {
+
+		inAllowed := strings.HasPrefix(resolvedPath, allowedAbs+string(filepath.Separator)) || resolvedPath == allowedAbs
+		inTmp := isUnderTmpDir(resolvedPath)
+
+		if !inAllowed && !inTmp {
 			return "", fmt.Errorf("path %s is outside allowed directory %s", path, allowedDir)
 		}
 	}
 
 	return resolvedPath, nil
+}
+
+// isUnderTmpDir checks if the resolved path is under the system temp directory.
+func isUnderTmpDir(resolvedPath string) bool {
+	tmpDir := filepath.Clean(os.TempDir())
+	return strings.HasPrefix(resolvedPath, tmpDir+string(filepath.Separator)) || resolvedPath == tmpDir
 }
 
 type ReadFileTool struct {
