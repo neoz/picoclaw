@@ -40,7 +40,7 @@ func (t *STMTool) Parameters() map[string]interface{} {
 			"action": map[string]interface{}{
 				"type":        "string",
 				"enum":        []string{"recent", "search"},
-				"description": "Action to perform: 'recent' for last N messages, 'search' for BM25 search",
+				"description": "Action to perform: 'recent' for last N messages (use with sender_name to get messages from a specific user), 'search' for BM25 keyword search",
 			},
 			"query": map[string]interface{}{
 				"type":        "string",
@@ -60,7 +60,7 @@ func (t *STMTool) Parameters() map[string]interface{} {
 			},
 			"sender_name": map[string]interface{}{
 				"type":        "string",
-				"description": "Filter messages by username (case-insensitive partial match)",
+				"description": "ALWAYS use this to filter by username when asked about a specific user's messages. Case-insensitive partial match.",
 			},
 		},
 		"required": []string{"action"},
