@@ -29,17 +29,7 @@ func (t *MemoryStoreTool) Name() string {
 }
 
 func (t *MemoryStoreTool) Description() string {
-	return `Store a memory entry with a unique key. Categories control decay rate:
-- "core": permanent, never decays (default)
-- "daily": ~30-day half-life
-- "conversation": ~7-day half-life
-- "custom": ~90-day half-life
-Memory confidence decays over time. Frequently accessed memories decay slower. If the key already exists, the content is updated (confidence resets to 1.0).
-
-By default, memories are owned by the current user. Set shared=true to store as shared memory visible to all users (e.g. general knowledge, project facts, shared preferences). Use shared memory for information that is not specific to any single user.
-
-When storing facts involving entities (people, projects, places, concepts), include relations to build a knowledge graph for better context retrieval.
-Example: key="team_alice", content="Alice joined PicoClaw team", relations=[{"source":"Alice", "relation":"works_on", "target":"PicoClaw"}]`
+	return `Store a memory entry. Categories: core (permanent, default), daily (30d), conversation (7d), custom (90d). Existing key = update. Set shared=true for all-user visibility. Include relations for knowledge graph (e.g. relations=[{"source":"Alice","relation":"works_on","target":"PicoClaw"}]).`
 }
 
 func (t *MemoryStoreTool) Parameters() map[string]interface{} {

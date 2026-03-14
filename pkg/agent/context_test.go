@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -644,5 +645,212 @@ func TestCompressOldMessages_IntegrationWithSanitize(t *testing.T) {
 			// Only the last final assistant should be long (but "Hi!" is short)
 			t.Errorf("old assistant response at index %d should be truncated, got %d chars", i, len([]rune(msg.Content)))
 		}
+	}
+}
+
+// --- Tiered Memory Injection ---
+
+// newTestCBWithMemory creates a ContextBuilder with a real SQLite memory DB for testing.
+func newTestCBWithMemory(t *testing.T) (*ContextBuilder, *memory.MemoryDB) {
+	t.Helper()
+	dir := t.TempDir()
+	cb := NewContextBuilder(dir)
+	db, err := memory.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	cb.SetMemoryDB(db, nil)
+	return cb, db
+}
+
+func TestMemoryTier1_GroupContextByChatID(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	// Group memory contains chatID in content
+	db.Store("group_reaonline", "GROUP: Reaonline | ID: -1003269096966 | Persona: friendly", "core", "")
+	db.Store("group_cauca", "GROUP: Cauca | ID: -4661401806 | Persona: cheeky", "core", "")
+	db.Store("users_reaonline", "Members of reaonline group ID: -1003269096966", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "", "-1003269096966")
+
+	// Tier 1: should include group_reaonline and users_reaonline (contain chatID)
+	if !strings.Contains(ctx, "group_reaonline") {
+		t.Error("should include group_reaonline matching chatID")
+	}
+	if !strings.Contains(ctx, "users_reaonline") {
+		t.Error("should include users_reaonline matching chatID")
+	}
+	// Should NOT include group_cauca (different chatID)
+	if strings.Contains(ctx, "Group Context") && strings.Contains(ctx, "group_cauca") {
+		t.Error("should not include group_cauca in Group Context section")
+	}
+}
+
+func TestMemoryTier2_SenderProfileByOwner(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("user_khiemnnm_insights", "khiemnnm is the admin, likes automation", "core", "")
+	db.Store("user_litt0709", "litt0709 is a policy critic", "core", "")
+	db.Store("group_reaonline", "GROUP: Reaonline | ID: -100 | @khiemnnm @litt0709", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "khiemnnm", "-100")
+
+	// Tier 2: should include khiemnnm's profile
+	if !strings.Contains(ctx, "user_khiemnnm_insights") {
+		t.Error("should include sender's own profile")
+	}
+	// Should NOT include litt0709 in Sender Context (not the sender)
+	if strings.Contains(ctx, "Sender Context") && strings.Contains(ctx, "user_litt0709") {
+		t.Error("should not include other user's profile in Sender Context")
+	}
+}
+
+func TestMemoryTier2_MatchesByAtMention(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	// Memory that mentions @alice in content but key doesn't contain "alice"
+	db.Store("team_members", "Team: @alice (dev), @bob (pm)", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hi", "alice", "")
+
+	if !strings.Contains(ctx, "team_members") {
+		t.Error("should match memory containing @alice for sender alice")
+	}
+}
+
+func TestMemoryTier3_DailyNotesAlwaysIncluded(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("daily_2026_03_14", "Today: election day, gold prices up", "daily", "")
+	db.Store("group_other", "GROUP: Other | ID: -999", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "", "-123")
+
+	// Daily notes always included regardless of chatID
+	if !strings.Contains(ctx, "daily_2026_03_14") {
+		t.Error("daily notes should always be included")
+	}
+}
+
+func TestMemoryTier4_FTSFindsUnmatchedCores(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	// Core memory not matching chatID or owner
+	db.Store("user_litt0709", "litt0709 policy critic gold", "core", "")
+	db.Store("group_reaonline", "GROUP: Reaonline | ID: -100", "core", "")
+
+	// Use exact content term for FTS match
+	ctx := cb.buildRelevantMemoryContext("litt0709", "khiemnnm", "-100")
+
+	if !strings.Contains(ctx, "user_litt0709") {
+		t.Error("FTS should surface unmatched core memories when message content is relevant")
+	}
+}
+
+func TestMemoryTier4_GraphWalkFindsRelatedMemories(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("user_alice_profile", "Alice is a backend engineer", "core", "")
+	db.AddRelation("Alice", "works_on", "PicoClaw", "user_alice_profile")
+
+	// Message mentions "PicoClaw" — graph should walk to Alice's memory
+	ctx := cb.buildRelevantMemoryContext("who works on PicoClaw", "", "")
+
+	if !strings.Contains(ctx, "user_alice_profile") {
+		t.Error("graph walk should surface memories related to mentioned entities")
+	}
+}
+
+func TestMemoryNoMemoryDB_ReturnsEmpty(t *testing.T) {
+	cb := newTestContextBuilder(t)
+	// No memoryDB set
+	ctx := cb.buildRelevantMemoryContext("hello", "user1", "-123")
+	if ctx != "" {
+		t.Errorf("expected empty context without memoryDB, got %q", ctx)
+	}
+}
+
+func TestMemoryEmptyChatID_SkipsTier1(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("group_reaonline", "GROUP: Reaonline | ID: -100", "core", "")
+	db.Store("user_bob", "Bob likes fishing", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "bob", "")
+
+	// No chatID → no Group Context section
+	if strings.Contains(ctx, "Group Context") {
+		t.Error("should not have Group Context without chatID")
+	}
+	// But Tier 2 (sender) should still work
+	if !strings.Contains(ctx, "user_bob") {
+		t.Error("sender profile should still be included without chatID")
+	}
+}
+
+func TestMemoryEmptyOwner_SkipsTier2(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("user_khiemnnm", "Admin user", "core", "")
+	db.Store("group_test", "GROUP: Test | ID: -42", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "", "-42")
+
+	// No owner → no Sender Context section
+	if strings.Contains(ctx, "Sender Context") {
+		t.Error("should not have Sender Context without owner")
+	}
+	// Tier 1 (group) should still work
+	if !strings.Contains(ctx, "group_test") {
+		t.Error("group context should still be included without owner")
+	}
+}
+
+func TestMemoryHeaderCompressed(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("daily_test", "some daily note", "daily", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "", "")
+
+	if !strings.Contains(ctx, "# Memory") {
+		t.Error("should have memory header")
+	}
+	// Verify the header is the shorter version
+	if strings.Contains(ctx, "When interacting with me if something seems memorable") {
+		t.Error("should use compressed memory header, not the old verbose one")
+	}
+}
+
+func TestMemoryTierIsolation_OtherGroupNotInGroupContext(t *testing.T) {
+	cb, db := newTestCBWithMemory(t)
+
+	db.Store("group_rea", "GROUP: Rea | ID: -100 | Persona: cute", "core", "")
+	db.Store("group_cauca", "GROUP: Cauca | ID: -200 | Persona: cheeky", "core", "")
+	db.Store("users_rea", "Members: @alice @bob, group ID: -100", "core", "")
+	db.Store("users_cauca", "Members: @charlie @dave, group ID: -200", "core", "")
+
+	ctx := cb.buildRelevantMemoryContext("hello", "alice", "-100")
+
+	// Count occurrences in Group Context section only
+	groupIdx := strings.Index(ctx, "## Group Context")
+	senderIdx := strings.Index(ctx, "## Sender Context")
+
+	if groupIdx < 0 {
+		t.Fatal("missing Group Context section")
+	}
+
+	// Extract just the Group Context section
+	groupSection := ctx[groupIdx:]
+	if senderIdx > groupIdx {
+		groupSection = ctx[groupIdx:senderIdx]
+	}
+
+	if strings.Contains(groupSection, "group_cauca") {
+		t.Error("Group Context should not contain other group's config")
+	}
+	if strings.Contains(groupSection, "users_cauca") {
+		t.Error("Group Context should not contain other group's member list")
 	}
 }

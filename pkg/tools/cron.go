@@ -42,7 +42,7 @@ func (t *CronTool) Name() string {
 
 // Description returns the tool description
 func (t *CronTool) Description() string {
-	return "Schedule reminders and tasks. IMPORTANT: When user asks to be reminded or scheduled, you MUST call this tool. Use 'at_seconds' for one-time reminders (e.g., 'remind me in 10 minutes' → at_seconds=600). Use 'every_seconds' ONLY for recurring tasks (e.g., 'every 2 hours' → every_seconds=7200). Use 'cron_expr' for complex recurring schedules (e.g., '0 9 * * *' for daily at 9am)."
+	return "Schedule reminders and recurring tasks. at_seconds: one-time (e.g. 600=10min). every_seconds: recurring interval. cron_expr: cron schedule (e.g. '0 9 * * *')."
 }
 
 // Parameters returns the tool parameters schema

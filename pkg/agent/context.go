@@ -256,20 +256,21 @@ func (cb *ContextBuilder) buildDelegationPrompt() string {
 }
 
 // buildRelevantMemoryContext returns memory context relevant to the user message.
+// Uses 5-tier session-aware injection to minimize token usage:
+//   Tier 1: Group identity — core memories whose content contains chatID
+//   Tier 2: Active sender — core memories matching owner username/ID
+//   Tier 3: Temporal — daily notes + recent memories
+//   Tier 4: Message-relevant — FTS5 search + graph walk
 // When owner is non-empty, only shared + that owner's memories are returned.
-func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) string {
+func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner, chatID string) string {
 	if cb.memoryDB == nil {
 		return ""
 	}
 
 	topK := 10
-	minRelevance := 0.1
 	if cb.memoryCfg != nil {
 		if cb.memoryCfg.ContextTopK > 0 {
 			topK = cb.memoryCfg.ContextTopK
-		}
-		if cb.memoryCfg.MinRelevance > 0 {
-			minRelevance = cb.memoryCfg.MinRelevance
 		}
 	}
 
@@ -278,23 +279,67 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 
 	now := time.Now().UTC()
 
-	// 1. Core memories (permanent, always included)
+	// Load all core entries once, then split into tiers
 	coreEntries, _ := cb.memoryDB.List("core", 20, owner)
-	if len(coreEntries) > 0 {
+
+	// Tier 1: Group identity — core memories containing current chatID
+	// Naturally picks up group config (persona/rules) + member list
+	if chatID != "" && len(coreEntries) > 0 {
 		var sb strings.Builder
-		sb.WriteString("## Core Memories\n\n")
+		sb.WriteString("## Group Context\n\n")
+		added := 0
 		for _, e := range coreEntries {
-			seenKeys[e.Key] = true
 			conf := memory.ComputeConfidence(e.Confidence, e.CreatedAt, now, e.AccessCount, e.Category)
 			if conf < 0.01 {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+			if strings.Contains(e.Content, chatID) {
+				seenKeys[e.Key] = true
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+				added++
+			}
 		}
-		parts = append(parts, sb.String())
+		if added > 0 {
+			parts = append(parts, sb.String())
+		}
 	}
 
-	// 2. Daily notes (recent, always included for temporal awareness)
+	// Tier 2: Active sender — core memories matching current owner's username/ID
+	if owner != "" && len(coreEntries) > 0 {
+		ownerLower := strings.ToLower(owner)
+		var sb strings.Builder
+		sb.WriteString("## Sender Context\n\n")
+		added := 0
+		for _, e := range coreEntries {
+			if seenKeys[e.Key] {
+				continue
+			}
+			conf := memory.ComputeConfidence(e.Confidence, e.CreatedAt, now, e.AccessCount, e.Category)
+			if conf < 0.01 {
+				continue
+			}
+			// Match by key pattern (user_{owner}) or content containing @owner
+			keyLower := strings.ToLower(e.Key)
+			if strings.Contains(keyLower, ownerLower) || strings.Contains(e.Content, "@"+owner) {
+				seenKeys[e.Key] = true
+				sb.WriteString(fmt.Sprintf("- **%s**: %s\n", e.Key, e.Content))
+				added++
+			}
+		}
+		if added > 0 {
+			parts = append(parts, sb.String())
+		}
+	}
+
+	// Mark remaining core entries as seen so they don't appear in FTS results
+	// but DON'T inject them — they'll be pulled by Tier 4 if message-relevant
+	for _, e := range coreEntries {
+		if !seenKeys[e.Key] {
+			seenKeys[e.Key] = true
+		}
+	}
+
+	// Tier 3: Temporal context — daily notes + recent memories
 	dailyEntries, _ := cb.memoryDB.List("daily", 10, owner)
 	if len(dailyEntries) > 0 {
 		var sb strings.Builder
@@ -306,7 +351,6 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 		parts = append(parts, sb.String())
 	}
 
-	// 3. Recent memories (daily+custom from last 3 days, ensures temporal context)
 	recentEntries, _ := cb.memoryDB.ListRecent([]string{"daily", "custom"}, 3, 5, owner)
 	if len(recentEntries) > 0 {
 		var sb strings.Builder
@@ -325,39 +369,50 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 		}
 	}
 
-	// 4. Graph walk - find entities mentioned in the message, walk relations
+	// Tier 4: Message-relevant — graph walk + FTS5 search
+	// Unmatched core memories can surface here if message content triggers them
 	if userMessage != "" {
+		// Reset seenKeys for unmatched cores so FTS/graph can still find them
+		for _, e := range coreEntries {
+			// Keep tier 1+2 matches as seen, allow others to be found by FTS
+			keyLower := strings.ToLower(e.Key)
+			ownerLower := ""
+			if owner != "" {
+				ownerLower = strings.ToLower(owner)
+			}
+			isTier1 := chatID != "" && strings.Contains(e.Content, chatID)
+			isTier2 := ownerLower != "" && (strings.Contains(keyLower, ownerLower) || strings.Contains(e.Content, "@"+owner))
+			if !isTier1 && !isTier2 {
+				delete(seenKeys, e.Key)
+			}
+		}
+
 		graphMemories := cb.buildGraphMemoryContext(userMessage, owner, seenKeys)
 		if graphMemories != "" {
 			parts = append(parts, graphMemories)
 		}
-	}
 
-	// 5. FTS5 search for relevant memories (exclude conversation noise, dedupe with graph)
-	if userMessage != "" {
 		results, err := cb.memoryDB.Search(userMessage, topK, owner)
 		if err == nil && len(results) > 0 {
 			var sb strings.Builder
 			sb.WriteString("## Relevant Memories\n\n")
 			added := 0
 			for _, r := range results {
-				// FTS5 rank is negative (lower = more relevant), filter by absolute value
-				if r.Rank < -minRelevance || r.Rank == 0 {
-					if seenKeys[r.Entry.Key] {
-						continue
-					}
-					// Skip conversation category (raw auto-saved messages are noisy)
-					if r.Entry.Category == "conversation" {
-						continue
-					}
-					// Skip entries with very low decayed confidence
-					if r.DecayedConfidence < 0.05 {
-						continue
-					}
-					seenKeys[r.Entry.Key] = true
-					sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", r.Entry.Key, r.Entry.Category, r.Entry.Content))
-					added++
+				// FTS5 MATCH already guarantees query terms are present;
+				// ORDER BY rank + LIMIT handles quality. No min-rank gate
+				// needed — it breaks on small corpora where BM25 IDF ~= 0.
+				if seenKeys[r.Entry.Key] {
+					continue
 				}
+				if r.Entry.Category == "conversation" {
+					continue
+				}
+				if r.DecayedConfidence < 0.05 {
+					continue
+				}
+				seenKeys[r.Entry.Key] = true
+				sb.WriteString(fmt.Sprintf("- [%s] (%s): %s\n", r.Entry.Key, r.Entry.Category, r.Entry.Content))
+				added++
 			}
 			if added > 0 {
 				parts = append(parts, sb.String())
@@ -369,7 +424,7 @@ func (cb *ContextBuilder) buildRelevantMemoryContext(userMessage, owner string) 
 		return ""
 	}
 
-	return "# Memory\n\nWhen interacting with me if something seems memorable or important, use the memory_store tool to save it. When I ask you about past information, use memory_search to find it. If you need to update or delete something, use memory_forget.\n\n" + strings.Join(parts, "\n")
+	return "# Memory\n\nUse memory_store/memory_search/memory_forget tools to manage memories.\n\n" + strings.Join(parts, "\n")
 }
 
 // buildGraphMemoryContext walks the knowledge graph for entities found in the message.
@@ -512,7 +567,7 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 	var dynamicParts []string
 
 	if cb.instructions == "" || cb.contextSections["memory"] {
-		if memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner); memoryContext != "" {
+		if memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner, chatID); memoryContext != "" {
 			dynamicParts = append(dynamicParts, memoryContext)
 		}
 	}
@@ -841,7 +896,7 @@ func (cb *ContextBuilder) GetContextStats(history []providers.Message, summary, 
 
 	// --- Dynamic parts ---
 	if cb.instructions == "" || cb.contextSections["memory"] {
-		if memCtx := cb.buildRelevantMemoryContext(currentMessage, owner); memCtx != "" {
+		if memCtx := cb.buildRelevantMemoryContext(currentMessage, owner, chatID); memCtx != "" {
 			stats.DynamicParts = append(stats.DynamicParts, makeStat("memory", memCtx))
 		}
 	}

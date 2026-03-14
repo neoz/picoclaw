@@ -24,10 +24,7 @@ func (t *CostSummaryTool) Name() string {
 }
 
 func (t *CostSummaryTool) Description() string {
-	return "Get API usage cost and token statistics. Without parameters: overview of session/today/month. " +
-		"Use 'period' for specific queries: 'today', 'month' (current month), 'YYYY-MM' (specific month), 'YYYY-MM-DD' (specific day). " +
-		"Use 'last_days', 'last_months', or 'last_years' for relative ranges (e.g. last 7 days, last 3 months). " +
-		"Returns cost, token counts (input/output/total), request count, and per-model breakdown."
+	return "Get API usage cost and token stats. No params: session/today/month overview. period: 'today', 'month', 'YYYY-MM', 'YYYY-MM-DD'. last_days/last_months/last_years for relative ranges."
 }
 
 func (t *CostSummaryTool) Parameters() map[string]interface{} {

@@ -409,7 +409,6 @@ func DefaultConfig() *Config {
 				Custom:       90,
 			},
 			SearchLimit:    20,
-			MinRelevance:   0.1,
 			ContextTopK:    10,
 			SnapshotOnExit: false,
 		},

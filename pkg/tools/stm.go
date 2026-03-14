@@ -30,7 +30,7 @@ func (t *STMTool) Name() string {
 }
 
 func (t *STMTool) Description() string {
-	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked keyword search over recent messages. To find messages from a specific user, use 'sender_name' (case-insensitive partial match) with 'recent' action -- do NOT use 'search' with a username as query. Use 'days' to narrow the time window (default 7, set 1 for today). Use 'sender_id' to filter by user ID."
+	return "Access current session messages. 'recent': last N messages (default 10, max 50). 'search': BM25 keyword search. Filter by sender_name (not search query) or sender_id. Use 'days' to narrow window (default 7)."
 }
 
 func (t *STMTool) Parameters() map[string]interface{} {

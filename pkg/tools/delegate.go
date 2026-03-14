@@ -50,7 +50,7 @@ func (t *DelegateTool) Description() string {
 		parts = append(parts, line)
 	}
 
-	desc := "Delegate a task to a specialist agent. You SHOULD use this tool whenever a user's request matches a specialist agent's expertise. The agent runs with its own model, tools, and context, then returns the result."
+	desc := "Delegate a task to a specialist agent. Use when request matches a specialist's expertise."
 	if len(parts) > 0 {
 		desc += "\n\nAvailable agents:\n" + strings.Join(parts, "\n")
 	}

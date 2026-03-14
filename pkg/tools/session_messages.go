@@ -22,7 +22,7 @@ func (t *SessionMessagesTool) Name() string {
 }
 
 func (t *SessionMessagesTool) Description() string {
-	return "Access messages from any session by specifying a session key. Actions: 'list' returns available session keys, 'recent' returns last N messages from a session (default 10, max 50), 'search' performs BM25-ranked keyword search over a session's messages. To find messages from a specific user, use 'sender_name' (case-insensitive partial match) with 'recent' action -- do NOT use 'search' with a username as query. Use 'days' to narrow the time window (default 7). Use 'sender_id' to filter by user ID."
+	return "Access messages from any session by session_key. 'list': available sessions. 'recent': last N messages. 'search': BM25 keyword search. Filter by sender_name (not search query) or sender_id. Use 'days' to narrow window (default 7)."
 }
 
 func (t *SessionMessagesTool) Parameters() map[string]interface{} {

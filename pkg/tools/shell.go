@@ -30,7 +30,7 @@ func (t *ExecTool) Name() string {
 }
 
 func (t *ExecTool) Description() string {
-	return "Execute a shell command within the workspace directory. Commands accessing paths outside the workspace are blocked. For fetching web content (weather, news, APIs), prefer the web_fetch tool instead of curl/wget."
+	return "Execute a shell command in workspace. Paths outside workspace are blocked. Prefer web_fetch for URLs."
 }
 
 func (t *ExecTool) Parameters() map[string]interface{} {

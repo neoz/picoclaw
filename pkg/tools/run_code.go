@@ -21,7 +21,7 @@ func (t *RunCodeTool) Name() string {
 }
 
 func (t *RunCodeTool) Description() string {
-	return "Run code directly in a sandboxed environment without saving to workspace. Supports Python (with uv for dependencies) and shell scripts. Use this for one-off scripts, quick experiments, or when you don't need to persist the code."
+	return "Run Python or shell code in sandbox without saving to workspace. Use 'dependencies' for pip packages."
 }
 
 func (t *RunCodeTool) Parameters() map[string]interface{} {
