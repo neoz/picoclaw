@@ -22,7 +22,7 @@ func (t *SessionMessagesTool) Name() string {
 }
 
 func (t *SessionMessagesTool) Description() string {
-	return "Access messages from any session by specifying a session key. Actions: 'list' returns available session keys, 'recent' returns last N messages from a session (default 10, max 50), 'search' performs BM25-ranked search over a session's messages. Use 'days' to narrow the time window (default 7). Use 'sender_id' to filter by user ID or 'sender_name' to filter by username (case-insensitive partial match)."
+	return "Access messages from any session by specifying a session key. Actions: 'list' returns available session keys, 'recent' returns last N messages from a session (default 10, max 50), 'search' performs BM25-ranked keyword search over a session's messages. To find messages from a specific user, use 'sender_name' (case-insensitive partial match) with 'recent' action -- do NOT use 'search' with a username as query. Use 'days' to narrow the time window (default 7). Use 'sender_id' to filter by user ID."
 }
 
 func (t *SessionMessagesTool) Parameters() map[string]interface{} {
@@ -117,9 +117,10 @@ func (t *SessionMessagesTool) Execute(ctx context.Context, args map[string]inter
 		if len(entries) == 0 {
 			return "No matching messages found.", nil
 		}
+		// Include sender info so username queries match via BM25
 		docs := make([]string, len(entries))
 		for i, e := range entries {
-			docs[i] = e.Content
+			docs[i] = e.SenderName + " " + e.SenderID + " " + e.Content
 		}
 		indices := bm25Rank(docs, query, 10)
 		if len(indices) == 0 {

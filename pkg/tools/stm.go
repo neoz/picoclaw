@@ -30,7 +30,7 @@ func (t *STMTool) Name() string {
 }
 
 func (t *STMTool) Description() string {
-	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked search over recent messages. Use 'days' to narrow the time window (default 7, set 1 for last day). Use 'sender_id' to filter by user ID or 'sender_name' to filter by username (case-insensitive partial match)."
+	return "Access recent messages from the current session. Actions: 'recent' returns last N messages (default 10, max 50), 'search' performs BM25-ranked keyword search over recent messages. To find messages from a specific user, use 'sender_name' (case-insensitive partial match) with 'recent' action -- do NOT use 'search' with a username as query. Use 'days' to narrow the time window (default 7, set 1 for today). Use 'sender_id' to filter by user ID."
 }
 
 func (t *STMTool) Parameters() map[string]interface{} {
@@ -111,10 +111,10 @@ func (t *STMTool) Execute(ctx context.Context, args map[string]interface{}) (str
 		if len(entries) == 0 {
 			return "No matching messages found.", nil
 		}
-		// Build docs for BM25
+		// Build docs for BM25 (include sender info so username queries match)
 		docs := make([]string, len(entries))
 		for i, e := range entries {
-			docs[i] = e.Content
+			docs[i] = e.SenderName + " " + e.SenderID + " " + e.Content
 		}
 		indices := bm25Rank(docs, query, 10)
 		if len(indices) == 0 {
