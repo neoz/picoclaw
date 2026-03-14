@@ -19,6 +19,8 @@ RUN addgroup -S picoclaw && adduser -S picoclaw -G picoclaw
 
 COPY --from=builder /bin/picoclaw /usr/local/bin/picoclaw
 
+COPY --chown=picoclaw:picoclaw templates/ /home/picoclaw/.picoclaw/templates/
+
 RUN su-exec picoclaw picoclaw onboard
 
 COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/

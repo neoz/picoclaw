@@ -212,141 +212,25 @@ func onboard() {
 }
 
 func createWorkspaceTemplates(workspace string) {
-	templates := map[string]string{
-		"AGENTS.md": `# Agent Instructions
+	// Resolve templates directory: ~/.picoclaw/templates/
+	globalDir := filepath.Dir(getConfigPath())
+	templatesDir := filepath.Join(globalDir, "templates")
 
-You are a helpful AI assistant operating in a multi-agent system. Be concise, accurate, and friendly.
+	templateFiles := []string{"AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"}
 
-## Guidelines
-
-- Always explain what you're doing before taking actions
-- Ask for clarification when the request is ambiguous
-- Use tools to help accomplish tasks
-- Remember important information in your memory files
-- Be proactive and helpful
-- Learn from user feedback
-
-## Agent Delegation
-
-When a specialist agent is available and suited for the task, **always use the ` + "`delegate`" + ` tool instead of handling it yourself**.
-
-- Provide clear context and expected output format in the delegation message
-- Review the specialist's output before relaying to the user
-- For complex tasks, break into subtasks and delegate each to the appropriate specialist
-- Skip delegation when the task is trivial, no specialist matches, or the user asks you to handle it directly
-
-### Delegation Flow
-
-1. Receive user request
-2. Identify if a specialist agent matches the task
-3. If yes → ` + "`delegate`" + ` with context + expected output → review result → respond to user
-4. If no → handle directly
-`,
-		"SOUL.md": `# Soul
-
-I am picoclaw, a lightweight AI assistant powered by AI.
-
-## Personality
-
-- Helpful and friendly
-- Concise and to the point
-- Curious and eager to learn
-- Honest and transparent
-
-## Values
-
-- Accuracy over speed
-- User privacy and safety
-- Transparency in actions
-- Continuous improvement
-`,
-		"USER.md": `# User
-
-Information about user goes here.
-
-## Preferences
-
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
-
-## Personal Information
-
-- Name: (optional)
-- Location: (optional)
-- Occupation: (optional)
-
-## Learning Goals
-
-- What the user wants to learn from AI
-- Preferred interaction style
-- Areas of interest
-`,
-		"IDENTITY.md": `# Identity
-
-## Name
-PicoClaw 🦞
-
-## Description
-Ultra-lightweight personal AI assistant written in Go, inspired by nanobot.
-
-## Version
-0.1.0
-
-## Purpose
-- Provide intelligent AI assistance with minimal resource usage
-- Support multiple LLM providers (OpenAI, Anthropic, Zhipu, etc.)
-- Enable easy customization through skills system
-- Run on minimal hardware ($10 boards, <10MB RAM)
-
-## Capabilities
-
-- Web search and content fetching
-- File system operations (read, write, edit)
-- Shell command execution
-- Multi-channel messaging (Telegram, WhatsApp, Feishu)
-- Skill-based extensibility
-- Memory and context management
-
-## Philosophy
-
-- Simplicity over complexity
-- Performance over features
-- User control and privacy
-- Transparent operation
-- Community-driven development
-
-## Goals
-
-- Provide a fast, lightweight AI assistant
-- Support offline-first operation where possible
-- Enable easy customization and extension
-- Maintain high quality responses
-- Run efficiently on constrained hardware
-
-## License
-MIT License - Free and open source
-
-## Repository
-https://github.com/sipeed/picoclaw
-
-## Contact
-Issues: https://github.com/sipeed/picoclaw/issues
-Discussions: https://github.com/sipeed/picoclaw/discussions
-
----
-
-"Every bit helps, every bit matters."
-- Picoclaw
-`,
-	}
-
-	for filename, content := range templates {
-		filePath := filepath.Join(workspace, filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			os.WriteFile(filePath, []byte(content), 0644)
-			fmt.Printf("  Created %s\n", filename)
+	for _, filename := range templateFiles {
+		destPath := filepath.Join(workspace, filename)
+		if _, err := os.Stat(destPath); !os.IsNotExist(err) {
+			continue
 		}
+		srcPath := filepath.Join(templatesDir, filename)
+		content, err := os.ReadFile(srcPath)
+		if err != nil {
+			fmt.Printf("  Warning: template %s not found in %s, skipping\n", filename, templatesDir)
+			continue
+		}
+		os.WriteFile(destPath, content, 0644)
+		fmt.Printf("  Created %s\n", filename)
 	}
 
 	memoryDir := filepath.Join(workspace, "memory")
@@ -357,14 +241,6 @@ Discussions: https://github.com/sipeed/picoclaw/discussions
 	if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
 		os.MkdirAll(skillsDir, 0755)
 		fmt.Println("  Created skills/")
-	}
-
-	for filename, content := range templates {
-		filePath := filepath.Join(workspace, filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			os.WriteFile(filePath, []byte(content), 0644)
-			fmt.Printf("  Created %s\n", filename)
-		}
 	}
 }
 

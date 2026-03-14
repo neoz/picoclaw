@@ -25,6 +25,8 @@ PICOCLAW_HOME?=$(HOME)/.picoclaw
 WORKSPACE_DIR?=$(PICOCLAW_HOME)/workspace
 WORKSPACE_SKILLS_DIR=$(WORKSPACE_DIR)/skills
 BUILTIN_SKILLS_DIR=$(CURDIR)/skills
+BUILTIN_TEMPLATES_DIR=$(CURDIR)/templates
+WORKSPACE_TEMPLATES_DIR=$(PICOCLAW_HOME)/templates
 
 # OS detection
 UNAME_S:=$(shell uname -s)
@@ -96,6 +98,14 @@ install: build
 				cp -r "$$skill" $(WORKSPACE_SKILLS_DIR); \
 				echo "  ✓ Installed skill: $$skill_name"; \
 			fi; \
+		fi; \
+	done
+	@echo "Installing workspace templates to $(WORKSPACE_TEMPLATES_DIR)..."
+	@mkdir -p $(WORKSPACE_TEMPLATES_DIR)
+	@for tmpl in $(BUILTIN_TEMPLATES_DIR)/*.md; do \
+		if [ -f "$$tmpl" ]; then \
+			cp "$$tmpl" $(WORKSPACE_TEMPLATES_DIR)/; \
+			echo "  ✓ Installed template: $$(basename $$tmpl)"; \
 		fi; \
 	done
 	@echo "Installation complete!"

@@ -345,15 +345,22 @@ Config file: `~/.picoclaw/config.json`
 PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspace`):
 
 ```
-~/.picoclaw/workspace/
-├── sessions/          # Conversation sessions and history
-├── memory/           # Long-term memory (MEMORY.md)
-├── cron/             # Scheduled jobs database
-├── skills/           # Custom skills
-├── AGENTS.md         # Agent behavior guide
-├── IDENTITY.md       # Agent identity
-├── SOUL.md           # Agent soul
-└── USER.md           # User preferences
+~/.picoclaw/
+├── config.json           # Main configuration
+├── templates/            # Workspace template files (installed by make install)
+│   ├── AGENTS.md
+│   ├── IDENTITY.md
+│   ├── SOUL.md
+│   └── USER.md
+└── workspace/
+    ├── sessions/         # Conversation sessions and history
+    ├── memory/           # Long-term memory (MEMORY.md)
+    ├── cron/             # Scheduled jobs database
+    ├── skills/           # Custom skills
+    ├── AGENTS.md         # Agent behavior guide (copied from templates on onboard)
+    ├── IDENTITY.md       # Agent identity
+    ├── SOUL.md           # Agent soul
+    └── USER.md           # User preferences
 ```
 
 ### Providers
