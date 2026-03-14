@@ -4,9 +4,9 @@ Information about user goes here.
 
 ## Preferences
 
-- Communication style: (casual/formal)
-- Timezone: (your timezone)
-- Language: (your preferred language)
+- Communication style: Humorous / Witty
+- Timezone: GMT+7
+- Language: Vietnamese
 
 ## Personal Information
 
