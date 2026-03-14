@@ -3,6 +3,8 @@ package channels
 import (
 	"strings"
 	"testing"
+
+	"github.com/mymmrac/telego"
 )
 
 // --- markdownToTelegramHTML ---
@@ -378,6 +380,74 @@ func TestExtractEntityText_OutOfBounds(t *testing.T) {
 }
 
 // --- helpers ---
+
+// --- formatReplyContext ---
+
+func newTelegramChannelStub(botID int64, botUsername string) *TelegramChannel {
+	return &TelegramChannel{
+		botID:       botID,
+		botUsername: botUsername,
+	}
+}
+
+func TestFormatReplyContext_ReplyToOtherUser(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 999, Username: "alice"}
+	got := c.formatReplyContext("hello world", from, "my reply")
+	want := "(replying to alice):\n> hello world\nmy reply"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatReplyContext_ReplyToBotMessage(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 100, Username: "mybot"}
+	got := c.formatReplyContext("bot said this", from, "user response")
+	want := "(replying to mybot):\n> bot said this\nuser response"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatReplyContext_ReplyToBotMultiline(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 100, Username: "mybot"}
+	got := c.formatReplyContext("line1\nline2\nline3", from, "response")
+	want := "(replying to mybot):\n> line1\n> line2\n> line3\nresponse"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatReplyContext_EmptyReplyText(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 100, Username: "mybot"}
+	got := c.formatReplyContext("", from, "my message")
+	if got != "my message" {
+		t.Errorf("expected content unchanged, got %q", got)
+	}
+}
+
+func TestFormatReplyContext_UserWithoutUsername(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 42}
+	got := c.formatReplyContext("hi", from, "reply")
+	want := "(replying to userid-42):\n> hi\nreply"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestFormatReplyContext_EmptyContent(t *testing.T) {
+	c := newTelegramChannelStub(100, "mybot")
+	from := &telego.User{ID: 200, Username: "bob"}
+	got := c.formatReplyContext("original msg", from, "")
+	want := "(replying to bob):\n> original msg\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
 
 // assertNoTagCrossing checks that HTML tags in s are properly nested (no crossing).
 func assertNoTagCrossing(t *testing.T, s string) {

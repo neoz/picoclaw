@@ -305,15 +305,15 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	}
 
 	// Include replied-to message content so the agent has context
-	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil &&
-		message.ReplyToMessage.From.ID != c.botID {
+	if message.ReplyToMessage != nil && message.ReplyToMessage.From != nil {
 		replyText := message.ReplyToMessage.Text
 		if replyText == "" {
 			replyText = message.ReplyToMessage.Caption
 		}
 
-		// Download photo from the replied-to message
-		if message.ReplyToMessage.Photo != nil && len(message.ReplyToMessage.Photo) > 0 {
+		// Download photo from the replied-to message (skip for bot's own messages)
+		if message.ReplyToMessage.From.ID != c.botID &&
+			message.ReplyToMessage.Photo != nil && len(message.ReplyToMessage.Photo) > 0 {
 			replyPhoto := message.ReplyToMessage.Photo[len(message.ReplyToMessage.Photo)-1]
 			replyPhotoPath := c.downloadPhoto(ctx, replyPhoto.FileID)
 			if replyPhotoPath != "" {
@@ -325,20 +325,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 			}
 		}
 
-		if replyText != "" {
-			replyFrom := message.ReplyToMessage.From.Username
-			if replyFrom == "" {
-				replyFrom = fmt.Sprintf("userid-%d", message.ReplyToMessage.From.ID)
-			}
-			// Format each line of the quoted text as a blockquote
-			var quoted strings.Builder
-			for _, line := range strings.Split(replyText, "\n") {
-				quoted.WriteString("> ")
-				quoted.WriteString(line)
-				quoted.WriteString("\n")
-			}
-			content = fmt.Sprintf("(replying to %s):\n%s%s", replyFrom, quoted.String(), content)
-		}
+		content = c.formatReplyContext(replyText, message.ReplyToMessage.From, content)
 	}
 
 	if content == "" {
@@ -490,6 +477,30 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		SessionKey: sessionKey,
 		Metadata:   metadata,
 	})
+}
+
+// formatReplyContext prepends reply context (blockquoted original message) to content.
+// Returns content unchanged if replyText is empty.
+func (c *TelegramChannel) formatReplyContext(replyText string, replyFrom *telego.User, content string) string {
+	if replyText == "" {
+		return content
+	}
+	var fromLabel string
+	if replyFrom.ID == c.botID {
+		fromLabel = c.botUsername
+	} else {
+		fromLabel = replyFrom.Username
+		if fromLabel == "" {
+			fromLabel = fmt.Sprintf("userid-%d", replyFrom.ID)
+		}
+	}
+	var quoted strings.Builder
+	for _, line := range strings.Split(replyText, "\n") {
+		quoted.WriteString("> ")
+		quoted.WriteString(line)
+		quoted.WriteString("\n")
+	}
+	return fmt.Sprintf("(replying to %s):\n%s%s", fromLabel, quoted.String(), content)
 }
 
 func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) string {
