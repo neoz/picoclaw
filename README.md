@@ -7,7 +7,7 @@
 <h3></h3>
 
 <p>
-<img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
+<img src="https://img.shields.io/badge/Go-1.26+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
 <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20RISC--V-blue" alt="Hardware">
 <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
 </p>
@@ -181,7 +181,7 @@ That's it! You have a working AI assistant in 2 minutes.
 
 ## 💬 Chat Apps
 
-Talk to your picoclaw through Telegram, Discord, or DingTalk
+Talk to your picoclaw through Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp, or MaixCam
 
 | Channel | Setup |
 |---------|-------|
@@ -189,6 +189,9 @@ Talk to your picoclaw through Telegram, Discord, or DingTalk
 | **Discord** | Easy (bot token + intents) |
 | **QQ** | Easy (AppID + AppSecret) |
 | **DingTalk** | Medium (app credentials) |
+| **Feishu** | Medium (app credentials) |
+| **WhatsApp** | Medium (bridge setup) |
+| **MaixCam** | Easy (built-in HTTP) |
 
 <details>
 <summary><b>Telegram</b> (Recommended)</summary>
@@ -350,7 +353,6 @@ PicoClaw stores data in your configured workspace (default: `~/.picoclaw/workspa
 ├── AGENTS.md         # Agent behavior guide
 ├── IDENTITY.md       # Agent identity
 ├── SOUL.md           # Agent soul
-├── TOOLS.md          # Tool descriptions
 └── USER.md           # User preferences
 ```
 
@@ -453,6 +455,10 @@ picoclaw agent -m "Hello"
     }
   },
   "tools": {
+    "exec": {
+      "sandbox": "auto",
+      "allowed_commands": []
+    },
     "web": {
       "search": {
         "api_key": "BSA..."
@@ -552,14 +558,53 @@ The orchestrator agent receives user messages and decides which specialist to de
 
 </details>
 
+### Sandbox (Code Execution)
+
+PicoClaw can run shell commands and code in a Docker sandbox for isolation. When enabled, `exec` and `run_code` tools run inside disposable containers with resource limits, while filesystem tools (`read_file`, `write_file`, etc.) continue to run on the host — all tools see the same workspace paths.
+
+```json
+{
+  "tools": {
+    "exec": {
+      "sandbox": "auto",
+      "allowed_commands": [],
+      "docker": {
+        "image": "picoclaw-sandbox:latest",
+        "memory_limit": "256m",
+        "cpu_limit": "0.5",
+        "pids_limit": "100",
+        "network": "none",
+        "read_only_root": true,
+        "volume": ""
+      }
+    }
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `sandbox` | `"auto"` | `"auto"` uses Docker if available, falls back to host. `"docker"` requires Docker. `"host"` disables Docker sandbox. |
+| `allowed_commands` | `[]` | Regex allowlist for host mode (empty = allow all). Only commands matching at least one pattern can run. Deny patterns still apply. |
+| `docker.image` | `"picoclaw-sandbox:latest"` | Sandbox Docker image (auto-built if missing) |
+| `docker.memory_limit` | `"256m"` | Container memory limit |
+| `docker.cpu_limit` | `"0.5"` | Container CPU limit |
+| `docker.pids_limit` | `"100"` | Max processes in container |
+| `docker.network` | `"none"` | Container network mode (`"none"`, `"host"`, `"bridge"`) |
+| `docker.read_only_root` | `true` | Mount container root filesystem as read-only |
+| `docker.volume` | `""` | Named Docker volume (auto-detected in container-to-container mode) |
+
+**Host mode safety**: When running without Docker (`sandbox: "host"`), commands are protected by deny-pattern matching (blocks `rm -rf`, `dd`, `shutdown`, etc.), workspace path restriction, and optional `allowed_commands` allowlist.
+
 ### Security
 
-PicoClaw includes optional input/output security scanning to protect against prompt injection attacks and accidental credential leaks.
+PicoClaw includes optional input/output security scanning to protect against prompt injection attacks, accidental credential leaks, and system prompt extraction.
 
 - **Prompt Guard** scans inbound messages for injection attempts (system override, role confusion, tool call injection, secret extraction, command injection, jailbreak). Configurable action (`warn` or `block`) and sensitivity threshold.
 - **Leak Detector** scans outbound responses for credentials (API keys, AWS secrets, private keys, JWTs, database URLs) and automatically redacts them before delivery.
+- **Prompt Leak Guard** detects when the LLM reproduces system prompt content in its output using fingerprint matching. Prevents prompt extraction attacks regardless of the language used.
 
-Both are disabled by default. Enable in `~/.picoclaw/config.json`:
+All are disabled by default. Enable in `~/.picoclaw/config.json`:
 
 ```json
 {
@@ -572,6 +617,11 @@ Both are disabled by default. Enable in `~/.picoclaw/config.json`:
     "leak_detector": {
       "enabled": true,
       "sensitivity": 0.7
+    },
+    "prompt_leak_guard": {
+      "enabled": true,
+      "threshold": 0.15,
+      "action": "block"
     }
   }
 }
@@ -584,6 +634,9 @@ Both are disabled by default. Enable in `~/.picoclaw/config.json`:
 | `prompt_guard.sensitivity` | `0.5` | Detection threshold (0.0-1.0, lower = more sensitive) |
 | `leak_detector.enabled` | `false` | Enable credential leak detection |
 | `leak_detector.sensitivity` | `0.7` | Detection threshold (0.0-1.0, above 0.5 also catches generic `password=`/`token=` patterns) |
+| `prompt_leak_guard.enabled` | `false` | Enable system prompt leak detection |
+| `prompt_leak_guard.threshold` | `0.15` | Fraction of fingerprints that must match to trigger (lower = more sensitive) |
+| `prompt_leak_guard.action` | `"block"` | `"warn"` logs only, `"block"` strips the response |
 
 ## 🤝 Contribute & Roadmap
 

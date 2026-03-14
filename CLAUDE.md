@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-PicoClaw is an ultra-lightweight personal AI assistant in Go for minimal hardware. Multi-channel messaging (Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp), web search, file ops, scheduled tasks, multi-agent orchestration.
+PicoClaw is an ultra-lightweight personal AI assistant in Go for minimal hardware. Multi-channel messaging (Telegram, Discord, QQ, DingTalk, Feishu, WhatsApp, MaixCam), web search, file ops, scheduled tasks, multi-agent orchestration.
 
 ## Build & Test
 
@@ -24,7 +24,7 @@ Run tests per package: `go test ./pkg/agent/`, `go test ./pkg/tools/`, `go test 
 
 Entry point: `cmd/picoclaw/main.go` (CLI commands: `onboard`, `agent`, `gateway`, `status`, `cron`, `skills`, `version`).
 
-Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription).
+Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector + prompt leak guard), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription).
 
 ## Key Gotchas
 
@@ -34,7 +34,10 @@ Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FT
 - **Telegram HTML**: `markdownToTelegramHTML()` uses sequential regex replacements -- bold/italic must run before links to prevent crossed tags. `Send()` retries as plain text on HTML parse errors.
 - **Telego reply API**: Uses `ReplyParameters: &telego.ReplyParameters{MessageID: id}`, not a flat `ReplyToMessageID` field.
 - **Telegram bypasses BaseChannel**: `telegram.go` `handleMessage()` publishes directly to bus, so agent routing (`allow_from` user:agentID suffix) must also be applied there, not just in `BaseChannel.HandleMessage()`.
-- **Shell safety URL stripping**: `guardCommand()` strips URLs before filesystem path checking so URL paths (e.g. `wttr.in/path`) aren't flagged as absolute paths. Deny-list still runs on the original command.
+- **Shell safety URL stripping**: `guardCommand()` in `executor_host.go` strips URLs before filesystem path checking so URL paths (e.g. `wttr.in/path`) aren't flagged as absolute paths. Deny-list still runs on the original command.
+- **Sandbox path alignment**: `DockerExecutor` mounts workspace at the same path inside the container (not `/workspace`) so `exec`/`run_code` and filesystem tools (`read_file`, `write_file`) see identical paths. Both volume mode and bind-mount mode use `workspaceDir` as the mount destination.
+- **Sandbox UID matching**: `DockerExecutor` detects the workspace owner's UID:GID at init (`detectWorkspaceOwner()` in `executor_docker_unix.go`) and passes it to `--user`. Falls back to `1000:1000` on Windows.
+- **Sandbox allowed_commands**: `ExecToolsConfig.AllowedCommands` wired to `HostExecutor.SetAllowPatterns()` in `instance.go`. Only applies to host mode; Docker mode relies on container isolation.
 - **Sessions keyed by chatID**: All users in a group share one session. Group detection uses `isGroupMessage()` in `loop.go`.
 - **Message data flow**: When adding fields to message history, update the struct, `AddToLog()` signature, and call sites in `loop.go`.
 - **Memory owner model**: `owner=""` = shared, `owner="username"` = private. Keys are globally unique (Store deletes existing key regardless of owner). `OwnerAwareTool` interface in `tools/base.go`.
@@ -65,7 +68,7 @@ Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FT
 
 Config: `~/.picoclaw/config.json` (template: `config.example.json`). `LoadConfig()` returns defaults if missing.
 
-Key sections: `agents` (defaults + list), `providers` (map with api_key/api_base/model_patterns/fallback), `channels`, `tools.web.search`, `gateway`, `memory`, `secrets`, `security`, `heartbeat`, `cost`.
+Key sections: `agents` (defaults + list), `providers` (map with api_key/api_base/model_patterns/fallback), `channels`, `tools.exec` (sandbox mode + docker config + allowed_commands), `tools.web.search`, `gateway`, `memory`, `secrets`, `security`, `heartbeat`, `cost`.
 
 `run.sh` commands: `--build`, `--clean`, `--stop`, `--restart`, `--force`, `skills-list`, `skills-export`, `skills-import <dir>`, `memory-export`.
 
