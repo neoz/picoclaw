@@ -237,6 +237,16 @@ func createWorkspaceTemplates(workspace string) {
 	os.MkdirAll(memoryDir, 0755)
 	fmt.Println("  Created memory/ (SQLite database will be initialized on first run)")
 
+	// Copy HEARTBEAT.md template into memory/ if not present
+	heartbeatDest := filepath.Join(memoryDir, "HEARTBEAT.md")
+	if _, err := os.Stat(heartbeatDest); os.IsNotExist(err) {
+		heartbeatSrc := filepath.Join(templatesDir, "HEARTBEAT.md")
+		if content, err := os.ReadFile(heartbeatSrc); err == nil {
+			os.WriteFile(heartbeatDest, content, 0644)
+			fmt.Println("  Created memory/HEARTBEAT.md")
+		}
+	}
+
 	skillsDir := filepath.Join(workspace, "skills")
 	if _, err := os.Stat(skillsDir); os.IsNotExist(err) {
 		os.MkdirAll(skillsDir, 0755)

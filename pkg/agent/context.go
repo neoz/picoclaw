@@ -129,8 +129,9 @@ You are picoclaw, a helpful AI assistant.
 ## Workspace
 Your workspace is at: %s
 - Skills: %s/skills/{skill-name}/SKILL.md
+- Heartbeat config: %s/memory/HEARTBEAT.md (user can ask you to add/edit watchlist items, reminders, or standing orders here)
 `,
-		now, runtime, workspacePath, workspacePath)
+		now, runtime, workspacePath, workspacePath, workspacePath)
 }
 
 func (cb *ContextBuilder) BuildOperational() string	 {
