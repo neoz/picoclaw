@@ -231,5 +231,6 @@
       "threshold": 0.15,
       "action": "block"
     }
-  }
+  },
+  "log_file": ""
 }

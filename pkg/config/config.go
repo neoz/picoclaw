@@ -27,6 +27,7 @@ type Config struct {
 	Cost      CostConfig      `json:"cost"`
 	Secrets   SecretsConfig   `json:"secrets"`
 	Security  SecurityConfig  `json:"security"`
+	LogFile   string          `json:"log_file" env:"PICOCLAW_LOG_FILE"`
 	mu        sync.RWMutex
 }
 

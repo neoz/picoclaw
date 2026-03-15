@@ -257,6 +257,7 @@ func createWorkspaceTemplates(workspace string) {
 func agentCmd() {
 	message := ""
 	sessionKey := "cli:default"
+	logFile := ""
 
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -274,6 +275,11 @@ func agentCmd() {
 				sessionKey = args[i+1]
 				i++
 			}
+		case "--log-file":
+			if i+1 < len(args) {
+				logFile = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -281,6 +287,18 @@ func agentCmd() {
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// CLI flag overrides config
+	if logFile == "" {
+		logFile = cfg.LogFile
+	}
+	if logFile != "" {
+		if err := logger.EnableFileLogging(logFile); err != nil {
+			fmt.Printf("Error enabling file logging: %v\n", err)
+			os.Exit(1)
+		}
+		defer logger.DisableFileLogging()
 	}
 
 	executor, err := tools.InitSandbox(cfg.WorkspacePath(), 60*time.Second, cfg.Tools.Exec)
@@ -406,13 +424,19 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 }
 
 func gatewayCmd() {
-	// Check for --debug flag
+	// Check for --debug and --log-file flags
+	logFile := ""
 	args := os.Args[2:]
-	for _, arg := range args {
-		if arg == "--debug" || arg == "-d" {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--debug", "-d":
 			logger.SetLevel(logger.DEBUG)
 			fmt.Println("🔍 Debug mode enabled")
-			break
+		case "--log-file":
+			if i+1 < len(args) {
+				logFile = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -420,6 +444,18 @@ func gatewayCmd() {
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// CLI flag overrides config
+	if logFile == "" {
+		logFile = cfg.LogFile
+	}
+	if logFile != "" {
+		if err := logger.EnableFileLogging(logFile); err != nil {
+			fmt.Printf("Error enabling file logging: %v\n", err)
+			os.Exit(1)
+		}
+		defer logger.DisableFileLogging()
 	}
 
 	executor, err := tools.InitSandbox(cfg.WorkspacePath(), 60*time.Second, cfg.Tools.Exec)
