@@ -21,9 +21,7 @@ COPY --from=builder /bin/picoclaw /usr/local/bin/picoclaw
 
 COPY --chown=picoclaw:picoclaw templates/ /home/picoclaw/.picoclaw/templates/
 
-RUN su-exec picoclaw picoclaw onboard
-
-COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/workspace/skills/
+COPY --chown=picoclaw:picoclaw skills/ /home/picoclaw/.picoclaw/skills-bundle/
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh

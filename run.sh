@@ -25,6 +25,7 @@ for arg in "$@"; do
         skills-import) ACTION="skills-import" ;;
         skills-export) ACTION="skills-export" ;;
         memory-export) ACTION="memory-export" ;;
+        sh|shell) ACTION="shell" ;;
     esac
 done
 
@@ -56,6 +57,9 @@ if [ "$ACTION" = "help" ]; then
     echo ""
     echo "Data commands:"
     echo "  memory-export         Export memory database from container to ./memory-export/"
+    echo ""
+    echo "Shell commands:"
+    echo "  sh, shell             Open an interactive shell in the container"
     echo ""
     echo "Examples:"
     echo "  ./run.sh                          Run the container"
@@ -142,6 +146,16 @@ if [ "$ACTION" = "memory-export" ]; then
     docker cp "$CONTAINER_NAME:$MEMORY_DIR/." "$EXPORT_DIR/"
     echo "Exported memory to $EXPORT_DIR"
     ls -lh "$EXPORT_DIR"
+    exit 0
+fi
+
+# sh/shell: open interactive shell in the container
+if [ "$ACTION" = "shell" ]; then
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        echo "Container '$CONTAINER_NAME' is not running."
+        exit 1
+    fi
+    docker exec -it "$CONTAINER_NAME" sh
     exit 0
 fi
 
