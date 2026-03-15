@@ -1,120 +1,83 @@
 # Advanced Planning Patterns
 
-## Multi-Step Aggregation Plans
+## Conditional Plans (Fallback Chains)
 
-### Pattern: Count Across Multiple Groups
-
-```
-User: "tổng tin nhắn của @userX trong tất cả group"
-
-Plan:
-1. memory_search: find all sessions user participates in
-2. For each session:
-   - session_messages(action="recent", days=N, sender_name="userX", session_key=...)
-3. Aggregate results
-4. Report: per-group breakdown + total
-```
-
-### Pattern: Time-Series Analysis
-
-```
-User: "thống kê tin nhắn theo giờ trong ngày"
-
-Plan:
-1. Fetch messages (broad time range)
-2. Group by hour (post-processing)
-3. Generate histogram/report
-```
-
-## Conditional Plans
-
-### With Fallbacks
+When the preferred approach may fail, define fallbacks:
 
 ```
 Plan A (preferred):
   - session_messages with sender_id (exact match)
-  
-If no results:
-  Plan B (fallback):
+
+If no results -> Plan B (relaxed):
   - session_messages with sender_name (partial match)
-  
-If still no results:
-  Plan C (broaden):
-  - Increase days parameter
-  - Or search without sender filter
+
+If still no results -> Plan C (broadened):
+  - Increase days parameter or remove sender filter
+  - Report: "No messages found with these criteria"
 ```
 
-### With Validation
+## Parallel Execution
+
+When steps are independent, mark them for parallel execution:
 
 ```
-Step 1: Validate inputs
-  - Is username valid format?
-  - Is date range reasonable?
-  - Does session exist?
-
-Step 2: If valid → execute
-Step 3: If invalid → ask for clarification
+[Step 1a] Fetch user A's messages (independent)
+[Step 1b] Fetch user B's messages (independent)
+[Step 2]  Compare results (depends on 1a + 1b)
 ```
 
-## Parallel Execution Plans
+## Cross-Source Aggregation
 
-When tools are independent:
-
-```
-User: "so sánh tin nhắn của A và B trong hôm nay"
-
-Plan:
-1. Fetch A's messages (independent)
-2. Fetch B's messages (independent)
-3. Wait for both
-4. Compare and report
-```
-
-## Caching Strategy
-
-For repeated queries:
+Combine data from multiple sessions or tools:
 
 ```
-Before execution:
-  - Check if similar query was made recently
-  - If yes AND data hasn't changed → return cached
-  - If no OR data changed → execute and cache
+[Step 1] List all available sessions
+  - session_messages(action="list")
+
+[Step 2] For each relevant session (parallel):
+  - session_messages(action="recent", session_key=..., sender_name=..., days=N)
+
+[Step 3] Aggregate
+  - Per-source breakdown + total
+  - Handle sessions with zero results gracefully
 ```
 
-## Template Responses
+## Time-Series Analysis
 
-### Confirmation Templates
-
-```
-"Em sẽ [action] [target] trong [scope] [time]. Đúng không anh? 🙏"
-
-Examples:
-- "Em sẽ đếm tin nhắn của @ch3r0k33r0s3 trong group Reaonline hôm nay. Đúng không anh? 🙏"
-- "Em sẽ tìm tin nhắn về 'xăng dầu' trong 7 ngày qua. Đúng không anh? 🙏"
-```
-
-### Result Templates
+Group results by time buckets:
 
 ```
-"Tìm thấy [count] tin nhắn của [user] trong [scope] [time]:"
-
-Chi tiết:
-| Thởi gian | Nội dung |
-|-----------|----------|
-| [time] | [preview] |
+[Step 1] Fetch messages with broad time range
+[Step 2] Group by hour/day from timestamps
+[Step 3] Report as distribution or trend
 ```
+
+## Plan Adaptation
+
+When mid-execution discovery changes the plan:
+
+```
+Original Step 3: Fetch from session "telegram:group-abc"
+Discovery: Session not found in memory
+Adapted Step 3: List sessions -> find closest match -> confirm with user -> fetch
+```
+
+Always inform the user when adapting: "Session not found by that name. Found 'group-xyz' instead -- using that."
+
+## Input Validation
+
+Before executing, verify:
+- All required parameters have values (no placeholders)
+- Session/user references resolve to real entities
+- Time ranges are valid and reasonable
+- Tool choice is optimal for the task
+
+If validation fails, ask for clarification rather than guessing.
 
 ## Common Pitfalls
 
-1. **Don't assume session** - Always confirm which group/session
-2. **Don't assume time** - "hôm nay" vs "24h qua" vs "ngày hôm nay"
-3. **Don't assume user format** - @username vs name vs "anh"
-4. **Don't forget pagination** - Large result sets need handling
-
-## Testing Plans
-
-Before executing, verify:
-- [ ] All parameters have values
-- [ ] Session/user exists
-- [ ] Time range is valid
-- [ ] Tool choice is optimal
+1. **Don't assume sessions** - Always verify which group/session via memory or listing
+2. **Don't assume time** - Clarify "today" vs "last 24h" vs "this calendar day"
+3. **Don't assume user format** - @username vs display name vs sender_id
+4. **Don't ignore pagination** - Large result sets may be truncated; note the limit
+5. **Don't re-fetch** - If data from a prior step is reusable, reference it instead of calling the tool again

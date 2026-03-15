@@ -1,111 +1,89 @@
 ---
 name: plan-executor
-description: Plan-first execution workflow for agents. Use when user requests require multi-step tool calls, complex queries, or when the agent needs to present a plan before execution. Triggers on requests involving message counting, data aggregation, multi-tool workflows, or when user explicitly asks for planning. The skill enforces analyze > plan > confirm > execute > report workflow.
+description: Plan-first execution workflow for complex multi-step tasks. Use when a request requires 3+ tool calls, data aggregation across sources, multi-session queries, destructive or irreversible actions, or when the user explicitly asks for a plan. Do NOT use for simple single-tool queries, greetings, or straightforward lookups.
 ---
 
-# Plan-First Execution Skill
+# Plan-First Execution
 
-ALL user requests MUST go through this workflow. No exceptions.
+Structured workflow for complex multi-step requests: **ANALYZE > PLAN > CONFIRM > EXECUTE > REPORT**.
 
-## Core Workflow
+## When to Apply
 
-```
-ANALYZE > PLAN > CONFIRM > EXECUTE > REPORT
-```
+**Use this workflow** for:
+- Requests requiring 3+ sequential tool calls
+- Cross-session or cross-source data aggregation
+- Destructive or irreversible operations (memory deletion, bulk updates)
+- Ambiguous requests needing clarification before execution
+
+**Skip this workflow** for:
+- Single tool calls with clear parameters
+- Greetings, small talk, identity questions
+- Straightforward lookups (weather, web search, file read)
 
 ## Step 1: ANALYZE
 
-Extract key elements from user request:
+Extract from the user request:
 
-| Element | Description | Example |
-|---------|-------------|---------|
-| **Intent** | What user wants | "Count messages" |
-| **Target** | Who/what is the subject | "ch3r0k33r0s3" |
-| **Scope** | Where to search | "Reaonline group" |
-| **Time** | When | "today" |
-| **Action** | What tools needed | "session_messages" |
+| Element | Question |
+|---------|----------|
+| **Intent** | What does the user want to achieve? |
+| **Target** | Who/what is the subject? |
+| **Scope** | Which sessions, groups, or data sources? |
+| **Time** | What time range? Resolve relative dates. |
+| **Tools** | Which tools are needed and in what order? |
+| **Risks** | Any destructive or irreversible actions? |
+
+If any element is ambiguous, ask for clarification before proceeding to Step 2.
 
 ## Step 2: PLAN
 
-Create execution plan with tool sequence:
+Build a numbered step sequence. Each step specifies: tool name, parameters, expected output, and dependency on prior steps.
 
 ```
-Plan for "tong tin nhan cua ch3r0k33r0s3 trong ngay hom nay":
+[Step 1] Resolve inputs
+  - Tool: memory_search | query: "..." | Expected: session key or user ID
 
-[Step 1] Resolve username > user_id
-  - Check memory for user mapping
-  - If not found, use sender_name filter
+[Step 2] Fetch data (depends on Step 1)
+  - Tool: session_messages | action: "recent" | session_key: from Step 1
 
-[Step 2] Determine session
-  - Current session OR
-  - Named group (lookup session_key in memory)
+[Step 3] Process and aggregate
+  - Post-process: count, group, filter, compare
 
-[Step 3] Call session_messages
-  - action: "recent"
-  - days: 1
-  - sender_name: "ch3r0k33r0s3"
-  - session_key: "telegram:-1003269096966"
-
-[Step 4] Count and format results
+[Step 4] Format and report
 ```
+
+Mark independent steps that can run in parallel.
 
 ## Step 3: CONFIRM
 
-### Complexity Classification
+Present the plan concisely, highlighting:
+- Number of steps and tools involved
+- Data sources being accessed
+- Any destructive actions (deletions, overwrites)
 
-| Complexity | CONFIRM Required? | Description |
-|------------|-------------------|-------------|
-| **Simple** | Skip | Greetings, small talk, no-tool requests |
-| **Medium** | Skip | Single tool call, straightforward queries |
-| **Complex** | Required | Multi-step, data aggregation, destructive actions |
+Wait for user approval. If user modifies the request, return to Step 2.
 
-### Simple (skip confirmation)
-
-1. Greetings ("hello", "hi", "chao buoi sang")
-2. Small talk ("khoe khong", "dang lam gi")
-3. Identity questions ("ten gi", "la ai")
-4. Help requests ("co the lam gi", "giup gi duoc")
-
-### Medium (skip confirmation)
-
-1. Single tool calls (weather, web search, file read)
-2. Straightforward queries with clear scope
-3. Non-destructive operations
-
-### Complex (confirm first)
-
-Present plan to user for approval:
-
-> Em se:
-> 1. Lay tin nhan tu group **Reaonline**
-> 2. Loc theo user **@ch3r0k33r0s3**
-> 3. Dem tong so tin nhan trong **hom nay**
->
-> Anh dong y khong a?
-
-### Confirmation Responses
-
-- User says "ok", "dong y", "yes", "y", "di", "lam di" -> EXECUTE
-- User modifies request -> Re-PLAN and CONFIRM again
-- Already confirmed in same session -> May skip for related requests
+Skip confirmation when the user already provided all parameters clearly and no destructive actions are involved.
 
 ## Step 4: EXECUTE
 
-Execute tools in sequence, handle errors:
+Run steps in order (or parallel where marked). Handle failures:
 
-- If tool fails -> report error, suggest alternative
-- If no results -> explain why, suggest adjustment
-- If partial results -> note limitations
+| Situation | Action |
+|-----------|--------|
+| Tool returns error | Report error, try fallback if available |
+| No results | Broaden scope (increase `days`, relax filters), report if still empty |
+| Partial results | Continue with available data, note limitations |
+| Mid-plan discovery | Adapt remaining steps, inform user if plan changes significantly |
 
 ## Step 5: REPORT
 
-Format results clearly, include context:
-```
-"Trong hom nay, @ch3r0k33r0s3 da gui 15 tin nhan trong group Reaonline."
-```
+Deliver results matching the user's intent:
+- Lead with the answer (number, summary, comparison)
+- Include relevant context (time range, source, filters applied)
+- Note any limitations or caveats
+- Suggest follow-up actions if applicable
 
+## Advanced Patterns
 
-
-## Progressive Disclosure
-
-For complex multi-step plans, see [references/advanced-patterns.md](references/advanced-patterns.md)
+For conditional plans, parallel execution, cross-source aggregation, and fallback strategies, see [references/advanced-patterns.md](references/advanced-patterns.md)
