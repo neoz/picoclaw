@@ -127,7 +127,7 @@ func (hs *HeartbeatService) checkHeartbeat() {
 
 	// If response contains HEARTBEAT_OK sentinel, no action needed
 	if strings.Contains(response, "HEARTBEAT_OK") {
-		logger.DebugCF("heartbeat", "Heartbeat OK, no action needed", nil)
+		logger.InfoCF("heartbeat", "Heartbeat OK, no action needed", nil)
 		return
 	}
 
