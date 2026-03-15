@@ -17,6 +17,7 @@ type HeartbeatService struct {
 	onHeartbeat    func(string) (string, error)
 	interval       time.Duration
 	enabled        bool
+	started        bool
 	mu             sync.RWMutex
 	stopChan       chan struct{}
 	deliverChannel string
@@ -51,7 +52,7 @@ func (hs *HeartbeatService) Start() error {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 
-	if hs.running() {
+	if hs.started {
 		return nil
 	}
 
@@ -59,6 +60,7 @@ func (hs *HeartbeatService) Start() error {
 		return fmt.Errorf("heartbeat service is disabled")
 	}
 
+	hs.started = true
 	go hs.runLoop()
 
 	return nil
@@ -68,10 +70,11 @@ func (hs *HeartbeatService) Stop() {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 
-	if !hs.running() {
+	if !hs.started {
 		return
 	}
 
+	hs.started = false
 	close(hs.stopChan)
 }
 
