@@ -159,6 +159,8 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	go m.dispatchOutbound(dispatchCtx)
 
+	StartMediaCleanup(ctx)
+
 	for name, channel := range m.channels {
 		logger.InfoCF("channels", "Starting channel", map[string]interface{}{
 			"channel": name,

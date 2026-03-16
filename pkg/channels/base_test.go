@@ -1,7 +1,10 @@
 package channels
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 // --- IsAllowed with agent suffix ---
@@ -174,5 +177,73 @@ func TestMatchAllowEntry_WithAgentSuffix(t *testing.T) {
 				t.Errorf("matchAllowEntry(%q) entry=%q, want %q", tt.sender, entry, tt.wantEntry)
 			}
 		})
+	}
+}
+
+// --- cleanOldMediaIn ---
+
+func TestCleanOldMediaIn_RemovesExpiredFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create an old file (modified 31 days ago)
+	oldFile := filepath.Join(dir, "old_photo.jpg")
+	if err := os.WriteFile(oldFile, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-31 * 24 * time.Hour)
+	os.Chtimes(oldFile, oldTime, oldTime)
+
+	// Create a recent file (modified today)
+	newFile := filepath.Join(dir, "new_photo.jpg")
+	if err := os.WriteFile(newFile, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cleanOldMediaIn(dir)
+
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Error("expected old file to be removed")
+	}
+	if _, err := os.Stat(newFile); err != nil {
+		t.Error("expected new file to be kept")
+	}
+}
+
+func TestCleanOldMediaIn_SkipsDirectories(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a subdirectory with old mtime
+	subDir := filepath.Join(dir, "subdir")
+	os.Mkdir(subDir, 0755)
+	oldTime := time.Now().Add(-31 * 24 * time.Hour)
+	os.Chtimes(subDir, oldTime, oldTime)
+
+	cleanOldMediaIn(dir)
+
+	if _, err := os.Stat(subDir); err != nil {
+		t.Error("expected subdirectory to be kept")
+	}
+}
+
+func TestCleanOldMediaIn_NonexistentDir(t *testing.T) {
+	// Should not panic on a missing directory
+	cleanOldMediaIn(filepath.Join(t.TempDir(), "nonexistent"))
+}
+
+func TestCleanOldMediaIn_KeepsFilesAtBoundary(t *testing.T) {
+	dir := t.TempDir()
+
+	// File modified 29 days ago should be kept
+	f := filepath.Join(dir, "boundary.jpg")
+	if err := os.WriteFile(f, []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().Add(-29 * 24 * time.Hour)
+	os.Chtimes(f, ts, ts)
+
+	cleanOldMediaIn(dir)
+
+	if _, err := os.Stat(f); err != nil {
+		t.Error("expected file at 29 days to be kept")
 	}
 }
