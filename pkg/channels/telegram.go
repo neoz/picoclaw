@@ -149,6 +149,17 @@ func (c *TelegramChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 		return nil
 	}
 
+	// Send media files first
+	for _, mediaPath := range msg.Media {
+		if err := c.sendMediaFile(ctx, chatID, mediaPath, ""); err != nil {
+			log.Printf("Failed to send media %s: %v", mediaPath, err)
+		}
+	}
+
+	if msg.Content == "" {
+		return nil
+	}
+
 	htmlContent := markdownToTelegramHTML(msg.Content)
 
 	// Try to edit placeholder (only if message fits in one chunk)
@@ -585,6 +596,64 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) 
 		return ""
 	}
 	return c.downloadFileWithInfo(ctx, file, ext)
+}
+
+var imageExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
+}
+
+var stickerExts = map[string]bool{
+	".webm": true, ".tgs": true,
+}
+
+func (c *TelegramChannel) sendMediaFile(ctx context.Context, chatID int64, path, caption string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open media file: %w", err)
+	}
+	defer f.Close()
+
+	ext := strings.ToLower(filepath.Ext(path))
+
+	if imageExts[ext] {
+		params := &telego.SendPhotoParams{
+			ChatID:  tu.ID(chatID),
+			Photo:   telego.InputFile{File: f},
+			Caption: caption,
+		}
+		if caption != "" {
+			params.ParseMode = telego.ModeHTML
+		}
+		return c.sendWithRetry(func() error {
+			_, e := c.bot.SendPhoto(ctx, params)
+			return e
+		})
+	}
+
+	if stickerExts[ext] {
+		params := &telego.SendStickerParams{
+			ChatID:  tu.ID(chatID),
+			Sticker: telego.InputFile{File: f},
+		}
+		return c.sendWithRetry(func() error {
+			_, e := c.bot.SendSticker(ctx, params)
+			return e
+		})
+	}
+
+	// Default: send as document
+	params := &telego.SendDocumentParams{
+		ChatID:   tu.ID(chatID),
+		Document: telego.InputFile{File: f},
+		Caption:  caption,
+	}
+	if caption != "" {
+		params.ParseMode = telego.ModeHTML
+	}
+	return c.sendWithRetry(func() error {
+		_, e := c.bot.SendDocument(ctx, params)
+		return e
+	})
 }
 
 const tempAllowTTL = 10 * time.Minute

@@ -14,6 +14,7 @@ type OutboundMessage struct {
 	Channel  string            `json:"channel"`
 	ChatID   string            `json:"chat_id"`
 	Content  string            `json:"content"`
+	Media    []string          `json:"media,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
