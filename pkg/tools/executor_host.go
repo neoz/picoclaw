@@ -203,5 +203,9 @@ func isSafeSystemPath(path string) bool {
 			return true
 		}
 	}
+	// Allow access to temp directory (consistent with read_file/write_file)
+	if isUnderTmpDir(filepath.Clean(path)) {
+		return true
+	}
 	return false
 }
