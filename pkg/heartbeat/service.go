@@ -88,6 +88,32 @@ func (hs *HeartbeatService) running() bool {
 }
 
 func (hs *HeartbeatService) runLoop() {
+	// Calculate remaining time from last heartbeat to avoid resetting on restart
+	remaining := hs.interval
+	if last := hs.loadLastHeartbeat(); !last.IsZero() {
+		elapsed := time.Since(last)
+		if elapsed < hs.interval {
+			remaining = hs.interval - elapsed
+		} else {
+			remaining = 0
+		}
+	}
+
+	// Wait for the remaining partial interval first
+	if remaining > 0 {
+		timer := time.NewTimer(remaining)
+		select {
+		case <-hs.stopChan:
+			timer.Stop()
+			return
+		case <-timer.C:
+			hs.checkHeartbeat()
+		}
+	} else {
+		hs.checkHeartbeat()
+	}
+
+	// Then switch to regular ticker
 	ticker := time.NewTicker(hs.interval)
 	defer ticker.Stop()
 
@@ -116,6 +142,8 @@ func (hs *HeartbeatService) checkHeartbeat() {
 	if onHeartbeat == nil {
 		return
 	}
+
+	hs.saveLastHeartbeat()
 
 	prompt := hs.buildPrompt()
 
@@ -173,6 +201,28 @@ If there is nothing to report, respond with exactly: HEARTBEAT_OK
 `, now, notes)
 
 	return prompt
+}
+
+func (hs *HeartbeatService) lastHeartbeatFile() string {
+	return filepath.Join(hs.workspace, "memory", "heartbeat_last.txt")
+}
+
+func (hs *HeartbeatService) loadLastHeartbeat() time.Time {
+	data, err := os.ReadFile(hs.lastHeartbeatFile())
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func (hs *HeartbeatService) saveLastHeartbeat() {
+	dir := filepath.Dir(hs.lastHeartbeatFile())
+	os.MkdirAll(dir, 0755)
+	os.WriteFile(hs.lastHeartbeatFile(), []byte(time.Now().Format(time.RFC3339Nano)), 0644)
 }
 
 func (hs *HeartbeatService) log(message string) {
