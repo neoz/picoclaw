@@ -100,6 +100,12 @@ func (hs *HeartbeatService) runLoop() {
 	}
 
 	// Wait for the remaining partial interval first
+	if remaining > 0 && remaining < hs.interval {
+		logger.InfoCF("heartbeat", "Resuming partial interval", map[string]interface{}{
+			"remaining": remaining.Round(time.Second).String(),
+			"interval":  hs.interval.String(),
+		})
+	}
 	if remaining > 0 {
 		timer := time.NewTimer(remaining)
 		select {
