@@ -36,6 +36,7 @@ type TelegramChannel struct {
 	cancelPolling context.CancelFunc
 	transcriber   *voice.GroqTranscriber
 	mediaStore    *media.FileMediaStore
+	workspace     string
 	placeholders  sync.Map // chatID -> messageID
 	tempAllows    sync.Map // "chatID:username" -> time.Time (expiry)
 	botUsername   string
@@ -64,6 +65,10 @@ func (c *TelegramChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
 
 func (c *TelegramChannel) SetMediaStore(store *media.FileMediaStore) {
 	c.mediaStore = store
+}
+
+func (c *TelegramChannel) SetWorkspace(workspace string) {
+	c.workspace = workspace
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {
@@ -622,6 +627,10 @@ var stickerExts = map[string]bool{
 }
 
 func (c *TelegramChannel) sendMediaFile(ctx context.Context, chatID int64, path, caption string) error {
+	if !media.IsAllowedPath(path, c.workspace) {
+		return fmt.Errorf("media path not allowed: %s", path)
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("failed to open media file: %w", err)

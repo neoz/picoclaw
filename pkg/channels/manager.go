@@ -67,6 +67,7 @@ func (m *Manager) initChannels() error {
 			})
 		} else {
 			telegram.SetMediaStore(m.mediaStore)
+			telegram.SetWorkspace(m.config.WorkspacePath())
 			m.channels["telegram"] = telegram
 			logger.InfoC("channels", "Telegram channel enabled successfully")
 		}
