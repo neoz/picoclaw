@@ -10,16 +10,19 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 type Manager struct {
 	channels     map[string]Channel
 	bus          *bus.MessageBus
 	config       *config.Config
+	mediaStore   *media.FileMediaStore
 	dispatchTask *asyncTask
 	mu           sync.RWMutex
 }
@@ -33,6 +36,11 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus) (*Manager, error
 		channels: make(map[string]Channel),
 		bus:      messageBus,
 		config:   cfg,
+		mediaStore: media.NewFileMediaStoreWithCleanup(media.MediaCleanerConfig{
+			Enabled:  true,
+			MaxAge:   30 * 24 * time.Hour,
+			Interval: 24 * time.Hour,
+		}),
 	}
 
 	if err := m.initChannels(); err != nil {
@@ -40,6 +48,11 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus) (*Manager, error
 	}
 
 	return m, nil
+}
+
+// MediaStore returns the shared media store for channels to register downloaded files.
+func (m *Manager) MediaStore() *media.FileMediaStore {
+	return m.mediaStore
 }
 
 func (m *Manager) initChannels() error {
@@ -53,6 +66,7 @@ func (m *Manager) initChannels() error {
 				"error": err.Error(),
 			})
 		} else {
+			telegram.SetMediaStore(m.mediaStore)
 			m.channels["telegram"] = telegram
 			logger.InfoC("channels", "Telegram channel enabled successfully")
 		}
@@ -92,6 +106,7 @@ func (m *Manager) initChannels() error {
 				"error": err.Error(),
 			})
 		} else {
+			discord.SetMediaStore(m.mediaStore)
 			m.channels["discord"] = discord
 			logger.InfoC("channels", "Discord channel enabled successfully")
 		}
@@ -159,7 +174,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	go m.dispatchOutbound(dispatchCtx)
 
-	StartMediaCleanup(ctx)
+	m.mediaStore.Start()
 
 	for name, channel := range m.channels {
 		logger.InfoCF("channels", "Starting channel", map[string]interface{}{
@@ -186,6 +201,10 @@ func (m *Manager) StopAll(ctx context.Context) error {
 	if m.dispatchTask != nil {
 		m.dispatchTask.cancel()
 		m.dispatchTask = nil
+	}
+
+	if m.mediaStore != nil {
+		m.mediaStore.Stop()
 	}
 
 	for name, channel := range m.channels {

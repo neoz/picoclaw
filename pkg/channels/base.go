@@ -3,13 +3,8 @@ package channels
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 )
@@ -145,58 +140,3 @@ func (c *BaseChannel) setRunning(running bool) {
 	c.running.Store(running)
 }
 
-const mediaMaxAge = 30 * 24 * time.Hour
-
-var mediaCleanupOnce sync.Once
-
-// StartMediaCleanup starts a background goroutine that periodically removes
-// files older than 30 days from the shared picoclaw_media directory.
-// Safe to call from multiple channels; only the first call starts the goroutine.
-func StartMediaCleanup(ctx context.Context) {
-	mediaCleanupOnce.Do(func() {
-		go func() {
-			// Run once at startup, then every 24 hours.
-			cleanOldMedia()
-			ticker := time.NewTicker(24 * time.Hour)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					cleanOldMedia()
-				}
-			}
-		}()
-	})
-}
-
-func cleanOldMedia() {
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
-	cleanOldMediaIn(mediaDir)
-}
-
-func cleanOldMediaIn(mediaDir string) {
-	entries, err := os.ReadDir(mediaDir)
-	if err != nil {
-		return // directory may not exist yet
-	}
-	cutoff := time.Now().Add(-mediaMaxAge)
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().Before(cutoff) {
-			path := filepath.Join(mediaDir, e.Name())
-			if err := os.Remove(path); err != nil {
-				log.Printf("Failed to remove old media file %s: %v", path, err)
-			} else {
-				log.Printf("Removed old media file: %s", path)
-			}
-		}
-	}
-}

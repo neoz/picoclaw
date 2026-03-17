@@ -22,6 +22,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/utils"
 	"github.com/sipeed/picoclaw/pkg/voice"
 )
@@ -34,6 +35,7 @@ type TelegramChannel struct {
 	updates       <-chan telego.Update
 	cancelPolling context.CancelFunc
 	transcriber   *voice.GroqTranscriber
+	mediaStore    *media.FileMediaStore
 	placeholders  sync.Map // chatID -> messageID
 	tempAllows    sync.Map // "chatID:username" -> time.Time (expiry)
 	botUsername   string
@@ -58,6 +60,10 @@ func NewTelegramChannel(cfg config.TelegramConfig, bus *bus.MessageBus) (*Telegr
 
 func (c *TelegramChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
 	c.transcriber = transcriber
+}
+
+func (c *TelegramChannel) SetMediaStore(store *media.FileMediaStore) {
+	c.mediaStore = store
 }
 
 func (c *TelegramChannel) Start(ctx context.Context) error {
@@ -238,6 +244,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 	chatID := message.Chat.ID
 	c.chatIDs.Store(senderID, chatID)
+	mediaScope := fmt.Sprintf("telegram:%d", chatID)
 
 	content := ""
 	mediaPaths := []string{}
@@ -255,7 +262,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 
 	if message.Photo != nil && len(message.Photo) > 0 {
 		photo := message.Photo[len(message.Photo)-1]
-		photoPath := c.downloadPhoto(ctx, photo.FileID)
+		photoPath := c.downloadPhoto(ctx, photo.FileID, mediaScope)
 		if photoPath != "" {
 			mediaPaths = append(mediaPaths, photoPath)
 			if content != "" {
@@ -266,7 +273,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	}
 
 	if message.Voice != nil {
-		voicePath := c.downloadFile(ctx, message.Voice.FileID, ".ogg")
+		voicePath := c.downloadFile(ctx, message.Voice.FileID, ".ogg", mediaScope)
 		if voicePath != "" {
 			mediaPaths = append(mediaPaths, voicePath)
 
@@ -294,7 +301,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	}
 
 	if message.Audio != nil {
-		audioPath := c.downloadFile(ctx, message.Audio.FileID, ".mp3")
+		audioPath := c.downloadFile(ctx, message.Audio.FileID, ".mp3", mediaScope)
 		if audioPath != "" {
 			mediaPaths = append(mediaPaths, audioPath)
 			if content != "" {
@@ -305,7 +312,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 	}
 
 	if message.Document != nil {
-		docPath := c.downloadFile(ctx, message.Document.FileID, "")
+		docPath := c.downloadFile(ctx, message.Document.FileID, "", mediaScope)
 		if docPath != "" {
 			mediaPaths = append(mediaPaths, docPath)
 			if content != "" {
@@ -337,7 +344,7 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, update telego.Updat
 		if message.ReplyToMessage.From.ID != c.botID &&
 			message.ReplyToMessage.Photo != nil && len(message.ReplyToMessage.Photo) > 0 {
 			replyPhoto := message.ReplyToMessage.Photo[len(message.ReplyToMessage.Photo)-1]
-			replyPhotoPath := c.downloadPhoto(ctx, replyPhoto.FileID)
+			replyPhotoPath := c.downloadPhoto(ctx, replyPhoto.FileID, mediaScope)
 			if replyPhotoPath != "" {
 				mediaPaths = append(mediaPaths, replyPhotoPath)
 				if replyText != "" {
@@ -525,25 +532,25 @@ func (c *TelegramChannel) formatReplyContext(replyText string, replyFrom *telego
 	return fmt.Sprintf("(replying to %s):\n%s%s", fromLabel, quoted.String(), content)
 }
 
-func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID string) string {
+func (c *TelegramChannel) downloadPhoto(ctx context.Context, fileID, scope string) string {
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		log.Printf("Failed to get photo file: %v", err)
 		return ""
 	}
 
-	return c.downloadFileWithInfo(ctx, file, ".jpg")
+	return c.downloadFileWithInfo(ctx, file, ".jpg", scope)
 }
 
-func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego.File, ext string) string {
+func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego.File, ext, scope string) string {
 	if file.FilePath == "" {
 		return ""
 	}
 
 	url := c.bot.FileDownloadURL(file.FilePath)
 
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+	mediaDir, err := media.EnsureDir()
+	if err != nil {
 		log.Printf("Failed to create media directory: %v", err)
 		return ""
 	}
@@ -554,6 +561,14 @@ func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego
 	if err := c.downloadFromURL(ctx, url, localPath); err != nil {
 		log.Printf("Failed to download file: %v", err)
 		return ""
+	}
+
+	if c.mediaStore != nil {
+		c.mediaStore.Store(localPath, media.MediaMeta{
+			Filename:    filepath.Base(localPath),
+			ContentType: media.ContentTypeByExt(ext),
+			Source:      "telegram",
+		}, scope)
 	}
 
 	return localPath
@@ -589,13 +604,13 @@ func (c *TelegramChannel) downloadFromURL(ctx context.Context, url, localPath st
 	return nil
 }
 
-func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext string) string {
+func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext, scope string) string {
 	file, err := c.bot.GetFile(ctx, &telego.GetFileParams{FileID: fileID})
 	if err != nil {
 		log.Printf("Failed to get file: %v", err)
 		return ""
 	}
-	return c.downloadFileWithInfo(ctx, file, ext)
+	return c.downloadFileWithInfo(ctx, file, ext, scope)
 }
 
 var imageExts = map[string]bool{

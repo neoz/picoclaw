@@ -15,6 +15,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/utils"
 	"github.com/sipeed/picoclaw/pkg/voice"
 )
@@ -24,6 +25,7 @@ type DiscordChannel struct {
 	session     *discordgo.Session
 	config      config.DiscordConfig
 	transcriber *voice.GroqTranscriber
+	mediaStore  *media.FileMediaStore
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -44,6 +46,10 @@ func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordC
 
 func (c *DiscordChannel) SetTranscriber(transcriber *voice.GroqTranscriber) {
 	c.transcriber = transcriber
+}
+
+func (c *DiscordChannel) SetMediaStore(store *media.FileMediaStore) {
+	c.mediaStore = store
 }
 
 func (c *DiscordChannel) Start(ctx context.Context) error {
@@ -116,12 +122,13 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 
 	content := m.Content
 	mediaPaths := []string{}
+	mediaScope := fmt.Sprintf("discord:%s", m.ChannelID)
 
 	for _, attachment := range m.Attachments {
 		isAudio := isAudioFile(attachment.Filename, attachment.ContentType)
 
 		if isAudio {
-			localPath := c.downloadAttachment(attachment.URL, attachment.Filename)
+			localPath := c.downloadAttachment(attachment.URL, attachment.Filename, mediaScope)
 			if localPath != "" {
 				mediaPaths = append(mediaPaths, localPath)
 
@@ -208,9 +215,9 @@ func isAudioFile(filename, contentType string) bool {
 	return false
 }
 
-func (c *DiscordChannel) downloadAttachment(url, filename string) string {
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
+func (c *DiscordChannel) downloadAttachment(url, filename, scope string) string {
+	mediaDir, err := media.EnsureDir()
+	if err != nil {
 		log.Printf("Failed to create media directory: %v", err)
 		return ""
 	}
@@ -240,6 +247,15 @@ func (c *DiscordChannel) downloadAttachment(url, filename string) string {
 	if err != nil {
 		log.Printf("Failed to write file: %v", err)
 		return ""
+	}
+
+	if c.mediaStore != nil {
+		ext := filepath.Ext(filename)
+		c.mediaStore.Store(localPath, media.MediaMeta{
+			Filename:    filename,
+			ContentType: media.ContentTypeByExt(ext),
+			Source:      "discord",
+		}, scope)
 	}
 
 	log.Printf("Attachment downloaded successfully to: %s", localPath)
