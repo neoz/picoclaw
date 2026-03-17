@@ -19,7 +19,9 @@ for f in AGENTS.md SOUL.md USER.md IDENTITY.md; do
     if [ ! -f "$WORKSPACE/$f" ] && [ -f "$TEMPLATES/$f" ]; then
         cp "$TEMPLATES/$f" "$WORKSPACE/$f"
     elif [ -f "$WORKSPACE/$f" ] && [ -f "$TEMPLATES/$f" ] && [ "$TEMPLATES/$f" -nt "$WORKSPACE/$f" ]; then
-        echo "Notice: $f has a newer template available in $TEMPLATES/$f"
+        cp "$WORKSPACE/$f" "$WORKSPACE/$f.backup"
+        cp "$TEMPLATES/$f" "$WORKSPACE/$f"
+        echo "Updated: $f (old version saved as $f.backup)"
     fi
 done
 
@@ -27,7 +29,9 @@ done
 if [ ! -f "$WORKSPACE/memory/HEARTBEAT.md" ] && [ -f "$TEMPLATES/HEARTBEAT.md" ]; then
     cp "$TEMPLATES/HEARTBEAT.md" "$WORKSPACE/memory/HEARTBEAT.md"
 elif [ -f "$WORKSPACE/memory/HEARTBEAT.md" ] && [ -f "$TEMPLATES/HEARTBEAT.md" ] && [ "$TEMPLATES/HEARTBEAT.md" -nt "$WORKSPACE/memory/HEARTBEAT.md" ]; then
-    echo "Notice: memory/HEARTBEAT.md has a newer template available in $TEMPLATES/HEARTBEAT.md"
+    cp "$WORKSPACE/memory/HEARTBEAT.md" "$WORKSPACE/memory/HEARTBEAT.md.backup"
+    cp "$TEMPLATES/HEARTBEAT.md" "$WORKSPACE/memory/HEARTBEAT.md"
+    echo "Updated: memory/HEARTBEAT.md (old version saved as memory/HEARTBEAT.md.backup)"
 fi
 
 # Sync skills from bundle (always overwrite to pick up updates)

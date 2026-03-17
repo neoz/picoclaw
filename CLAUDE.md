@@ -24,7 +24,7 @@ Run tests per package: `go test ./pkg/agent/`, `go test ./pkg/tools/`, `go test 
 
 Entry point: `cmd/picoclaw/main.go` (CLI commands: `onboard`, `agent`, `gateway`, `status`, `cron`, `skills`, `version`).
 
-Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector + prompt leak guard), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription).
+Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector + prompt leak guard), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription), `logger/` (structured logging with levels + JSON file output), `media/` (media file lifecycle + scoped registration + TTL-based GC), `utils/` (string helpers e.g. safe Unicode truncation).
 
 ## Key Gotchas
 
