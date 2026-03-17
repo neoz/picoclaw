@@ -220,30 +220,37 @@ func createWorkspaceTemplates(workspace string) {
 
 	for _, filename := range templateFiles {
 		destPath := filepath.Join(workspace, filename)
-		if _, err := os.Stat(destPath); !os.IsNotExist(err) {
-			continue
-		}
 		srcPath := filepath.Join(templatesDir, filename)
-		content, err := os.ReadFile(srcPath)
+		templateContent, err := os.ReadFile(srcPath)
 		if err != nil {
 			fmt.Printf("  Warning: template %s not found in %s, skipping\n", filename, templatesDir)
 			continue
 		}
-		os.WriteFile(destPath, content, 0644)
-		fmt.Printf("  Created %s\n", filename)
+		existingContent, readErr := os.ReadFile(destPath)
+		if readErr != nil {
+			// File doesn't exist, create it
+			os.WriteFile(destPath, templateContent, 0644)
+			fmt.Printf("  Created %s\n", filename)
+			continue
+		}
+		if string(existingContent) != string(templateContent) {
+			fmt.Printf("  Notice: %s has a newer template available. Review %s\n", filename, srcPath)
+		}
 	}
 
 	memoryDir := filepath.Join(workspace, "memory")
 	os.MkdirAll(memoryDir, 0755)
 	fmt.Println("  Created memory/ (SQLite database will be initialized on first run)")
 
-	// Copy HEARTBEAT.md template into memory/ if not present
+	// Copy HEARTBEAT.md template into memory/ if not present or notify if updated
 	heartbeatDest := filepath.Join(memoryDir, "HEARTBEAT.md")
-	if _, err := os.Stat(heartbeatDest); os.IsNotExist(err) {
-		heartbeatSrc := filepath.Join(templatesDir, "HEARTBEAT.md")
-		if content, err := os.ReadFile(heartbeatSrc); err == nil {
-			os.WriteFile(heartbeatDest, content, 0644)
+	heartbeatSrc := filepath.Join(templatesDir, "HEARTBEAT.md")
+	if templateContent, err := os.ReadFile(heartbeatSrc); err == nil {
+		if existingContent, readErr := os.ReadFile(heartbeatDest); readErr != nil {
+			os.WriteFile(heartbeatDest, templateContent, 0644)
 			fmt.Println("  Created memory/HEARTBEAT.md")
+		} else if string(existingContent) != string(templateContent) {
+			fmt.Printf("  Notice: memory/HEARTBEAT.md has a newer template available. Review %s\n", heartbeatSrc)
 		}
 	}
 

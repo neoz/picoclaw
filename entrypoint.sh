@@ -14,16 +14,20 @@ chown picoclaw:picoclaw "$PICOCLAW_HOME/.secret_key" 2>/dev/null || true
 # Initialize workspace directories
 su-exec picoclaw mkdir -p "$WORKSPACE/memory" "$WORKSPACE/skills"
 
-# Copy workspace template files if not present (AGENTS.md, SOUL.md, etc.)
+# Copy workspace template files if not present; notify if template is newer
 for f in AGENTS.md SOUL.md USER.md IDENTITY.md; do
     if [ ! -f "$WORKSPACE/$f" ] && [ -f "$TEMPLATES/$f" ]; then
         cp "$TEMPLATES/$f" "$WORKSPACE/$f"
+    elif [ -f "$WORKSPACE/$f" ] && [ -f "$TEMPLATES/$f" ] && [ "$TEMPLATES/$f" -nt "$WORKSPACE/$f" ]; then
+        echo "Notice: $f has a newer template available in $TEMPLATES/$f"
     fi
 done
 
-# Copy HEARTBEAT.md to memory/ if not present (preserve user edits)
+# Copy HEARTBEAT.md to memory/ if not present; notify if template is newer
 if [ ! -f "$WORKSPACE/memory/HEARTBEAT.md" ] && [ -f "$TEMPLATES/HEARTBEAT.md" ]; then
     cp "$TEMPLATES/HEARTBEAT.md" "$WORKSPACE/memory/HEARTBEAT.md"
+elif [ -f "$WORKSPACE/memory/HEARTBEAT.md" ] && [ -f "$TEMPLATES/HEARTBEAT.md" ] && [ "$TEMPLATES/HEARTBEAT.md" -nt "$WORKSPACE/memory/HEARTBEAT.md" ]; then
+    echo "Notice: memory/HEARTBEAT.md has a newer template available in $TEMPLATES/HEARTBEAT.md"
 fi
 
 # Sync skills from bundle (always overwrite to pick up updates)

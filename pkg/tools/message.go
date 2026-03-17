@@ -30,7 +30,7 @@ func (t *MessageTool) Name() string {
 }
 
 func (t *MessageTool) Description() string {
-	return "Send a message to a chat channel."
+	return "Send a message to a DIFFERENT chat channel or chat ID than the current conversation. Do NOT use this tool to reply to the current conversation - just respond directly instead. Only use this tool when you need to send a message to a different channel or chat_id, or when you need to send media attachments."
 }
 
 func (t *MessageTool) Parameters() map[string]interface{} {
