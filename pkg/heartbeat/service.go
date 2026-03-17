@@ -202,9 +202,6 @@ func (hs *HeartbeatService) buildPrompt() string {
 Current time: %s
 
 Check if there are any tasks I should be aware of or actions I should take.
-Review the memory file for any important updates or changes.
-Be proactive in identifying potential issues or improvements.
-
 If there is nothing to report, respond with exactly: HEARTBEAT_OK
 
 %s
