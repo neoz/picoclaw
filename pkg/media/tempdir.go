@@ -32,6 +32,36 @@ var extToContentType = map[string]string{
 	".pdf":  "application/pdf",
 }
 
+// IsAllowedPath checks whether the given file path is under one of the allowed
+// directories (media temp dir, workspace, or system temp). This prevents
+// outbound media from exfiltrating arbitrary files.
+func IsAllowedPath(path, workspace string) bool {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		abs, err := filepath.Abs(cleaned)
+		if err != nil {
+			return false
+		}
+		cleaned = abs
+	}
+
+	isUnder := func(dir string) bool {
+		d := filepath.Clean(dir)
+		return strings.HasPrefix(cleaned, d+string(filepath.Separator)) || cleaned == d
+	}
+
+	if isUnder(TempDir()) {
+		return true
+	}
+	if isUnder(os.TempDir()) {
+		return true
+	}
+	if workspace != "" {
+		return isUnder(workspace)
+	}
+	return false
+}
+
 // ContentTypeByExt returns a MIME content type for the given file extension.
 // Returns "application/octet-stream" for unknown extensions.
 func ContentTypeByExt(ext string) string {
