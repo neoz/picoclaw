@@ -449,6 +449,66 @@ func TestFormatReplyContext_EmptyContent(t *testing.T) {
 	}
 }
 
+// --- buildMediaFilename ---
+
+func TestBuildMediaFilename_UsesFileUniqueID(t *testing.T) {
+	got := buildMediaFilename("AgADBAADKqoxG1234", "photos/file_878.jpg", ".jpg")
+	if got != "AgADBAADKqoxG1234.jpg" {
+		t.Errorf("got %q, want %q", got, "AgADBAADKqoxG1234.jpg")
+	}
+}
+
+func TestBuildMediaFilename_NoDoubleExtension(t *testing.T) {
+	// filePath has .jpg, caller also passes ".jpg" — should not double
+	got := buildMediaFilename("AQADunique", "photos/file_878.jpg", ".jpg")
+	if got != "AQADunique.jpg" {
+		t.Errorf("got %q, want %q", got, "AQADunique.jpg")
+	}
+}
+
+func TestBuildMediaFilename_ExtOverride(t *testing.T) {
+	got := buildMediaFilename("AQADunique", "voice/file_999.oga", ".ogg")
+	if got != "AQADunique.ogg" {
+		t.Errorf("got %q, want %q", got, "AQADunique.ogg")
+	}
+}
+
+func TestBuildMediaFilename_EmptyExtUsesOriginal(t *testing.T) {
+	got := buildMediaFilename("AQADunique", "documents/report.pdf", "")
+	if got != "AQADunique.pdf" {
+		t.Errorf("got %q, want %q", got, "AQADunique.pdf")
+	}
+}
+
+func TestBuildMediaFilename_EmptyExtNoOriginal(t *testing.T) {
+	got := buildMediaFilename("AQADunique", "files/noext", "")
+	if got != "AQADunique" {
+		t.Errorf("got %q, want %q", got, "AQADunique")
+	}
+}
+
+func TestBuildMediaFilename_FallbackWhenNoUniqueID(t *testing.T) {
+	got := buildMediaFilename("", "photos/file_878.jpg", ".jpg")
+	if got != "file_878.jpg" {
+		t.Errorf("got %q, want %q", got, "file_878.jpg")
+	}
+}
+
+func TestBuildMediaFilename_FallbackEmptyExt(t *testing.T) {
+	got := buildMediaFilename("", "documents/report.pdf", "")
+	if got != "report.pdf" {
+		t.Errorf("got %q, want %q", got, "report.pdf")
+	}
+}
+
+func TestBuildMediaFilename_FallbackNoDoubleExt(t *testing.T) {
+	// Fallback path should also not produce double extension
+	got := buildMediaFilename("", "photos/file_42.jpg", ".png")
+	if got != "file_42.png" {
+		t.Errorf("got %q, want %q", got, "file_42.png")
+	}
+}
+
 // assertNoTagCrossing checks that HTML tags in s are properly nested (no crossing).
 func assertNoTagCrossing(t *testing.T, s string) {
 	t.Helper()

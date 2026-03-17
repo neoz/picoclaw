@@ -560,8 +560,7 @@ func (c *TelegramChannel) downloadFileWithInfo(ctx context.Context, file *telego
 		return ""
 	}
 
-	baseName := filepath.Base(file.FilePath)
-	localPath := filepath.Join(mediaDir, baseName[:min(16, len(baseName))]+ext)
+	localPath := filepath.Join(mediaDir, buildMediaFilename(file.FileUniqueID, file.FilePath, ext))
 
 	if err := c.downloadFromURL(ctx, url, localPath); err != nil {
 		log.Printf("Failed to download file: %v", err)
@@ -616,6 +615,21 @@ func (c *TelegramChannel) downloadFile(ctx context.Context, fileID, ext, scope s
 		return ""
 	}
 	return c.downloadFileWithInfo(ctx, file, ext, scope)
+}
+
+// buildMediaFilename constructs a local filename using the Telegram file
+// unique ID (guaranteed unique per file) and an extension. If ext is empty,
+// the extension is inferred from filePath.
+func buildMediaFilename(fileUniqueID, filePath, ext string) string {
+	if ext == "" {
+		ext = filepath.Ext(filepath.Base(filePath))
+	}
+	if fileUniqueID != "" {
+		return fileUniqueID + ext
+	}
+	// Fallback: use base name from path (should not happen with Telegram API)
+	baseName := filepath.Base(filePath)
+	return strings.TrimSuffix(baseName, filepath.Ext(baseName)) + ext
 }
 
 var imageExts = map[string]bool{
