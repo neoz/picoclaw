@@ -257,20 +257,27 @@ func TestConcurrentSafety(t *testing.T) {
 
 // --- TTL cleanup tests ---
 
-func newTestStoreWithCleanup(maxAge time.Duration) *FileMediaStore {
+func newTestStoreWithCleanup(dir string, maxAge time.Duration) *FileMediaStore {
 	s := NewFileMediaStoreWithCleanup(MediaCleanerConfig{
 		Enabled:  true,
 		MaxAge:   maxAge,
 		Interval: time.Hour, // won't tick in tests
+		MediaDir: dir,
 	})
 	return s
 }
 
+func setModTime(t *testing.T, path string, age time.Duration) {
+	t.Helper()
+	ts := time.Now().Add(-age)
+	if err := os.Chtimes(path, ts, ts); err != nil {
+		t.Fatalf("failed to set modtime: %v", err)
+	}
+}
+
 func TestCleanExpiredRemovesOldEntries(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Now()
-	store := newTestStoreWithCleanup(10 * time.Minute)
-	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
 
 	path := createTempFile(t, dir, "old.jpg")
 	ref, err := store.Store(path, MediaMeta{Source: "test"}, "scope1")
@@ -278,8 +285,7 @@ func TestCleanExpiredRemovesOldEntries(t *testing.T) {
 		t.Fatalf("Store failed: %v", err)
 	}
 
-	// Advance clock to present
-	store.nowFunc = func() time.Time { return now }
+	setModTime(t, path, 20*time.Minute)
 	removed := store.CleanExpired()
 
 	if removed != 1 {
@@ -295,9 +301,7 @@ func TestCleanExpiredRemovesOldEntries(t *testing.T) {
 
 func TestCleanExpiredKeepsNonExpired(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Now()
-	store := newTestStoreWithCleanup(10 * time.Minute)
-	store.nowFunc = func() time.Time { return now }
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
 
 	path := createTempFile(t, dir, "fresh.jpg")
 	ref, err := store.Store(path, MediaMeta{Source: "test"}, "scope1")
@@ -320,16 +324,12 @@ func TestCleanExpiredKeepsNonExpired(t *testing.T) {
 
 func TestCleanExpiredMixedAges(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Now()
-	store := newTestStoreWithCleanup(10 * time.Minute)
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
 
-	// Store old entry
-	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
 	oldPath := createTempFile(t, dir, "old.jpg")
 	oldRef, _ := store.Store(oldPath, MediaMeta{Source: "test"}, "scope1")
+	setModTime(t, oldPath, 20*time.Minute)
 
-	// Store fresh entry
-	store.nowFunc = func() time.Time { return now }
 	freshPath := createTempFile(t, dir, "fresh.jpg")
 	freshRef, _ := store.Store(freshPath, MediaMeta{Source: "test"}, "scope1")
 
@@ -348,21 +348,52 @@ func TestCleanExpiredMixedAges(t *testing.T) {
 
 func TestCleanExpiredCleansEmptyScopes(t *testing.T) {
 	dir := t.TempDir()
-	now := time.Now()
-	store := newTestStoreWithCleanup(10 * time.Minute)
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
 
-	// Store old entry as the only one in scope
-	store.nowFunc = func() time.Time { return now.Add(-20 * time.Minute) }
 	path := createTempFile(t, dir, "only.jpg")
 	store.Store(path, MediaMeta{Source: "test"}, "lonely_scope")
+	setModTime(t, path, 20*time.Minute)
 
-	store.nowFunc = func() time.Time { return now }
 	store.CleanExpired()
 
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	if _, ok := store.scopeToRefs["lonely_scope"]; ok {
 		t.Error("empty scope should be cleaned up")
+	}
+}
+
+func TestCleanExpiredRemovesOrphanedFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
+
+	// Create a file not tracked by the store (simulates previous run)
+	orphanPath := createTempFile(t, dir, "orphan.jpg")
+	setModTime(t, orphanPath, 20*time.Minute)
+
+	removed := store.CleanExpired()
+	if removed != 1 {
+		t.Errorf("expected 1 removed, got %d", removed)
+	}
+	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+		t.Error("orphaned file should be deleted")
+	}
+}
+
+func TestCleanExpiredSkipsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	store := newTestStoreWithCleanup(dir, 10*time.Minute)
+
+	subDir := filepath.Join(dir, "subdir")
+	os.Mkdir(subDir, 0755)
+	setModTime(t, subDir, 20*time.Minute)
+
+	removed := store.CleanExpired()
+	if removed != 0 {
+		t.Errorf("expected 0 removed, got %d", removed)
+	}
+	if _, err := os.Stat(subDir); err != nil {
+		t.Error("subdirectory should be kept")
 	}
 }
 
@@ -439,8 +470,7 @@ func TestStartZeroMaxAgeNoPanic(t *testing.T) {
 
 func TestConcurrentCleanupSafety(t *testing.T) {
 	dir := t.TempDir()
-	store := newTestStoreWithCleanup(50 * time.Millisecond)
-	store.nowFunc = time.Now
+	store := newTestStoreWithCleanup(dir, 50*time.Millisecond)
 
 	const workers = 10
 	const ops = 20

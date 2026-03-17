@@ -3,6 +3,7 @@ package media
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -48,6 +49,7 @@ type MediaCleanerConfig struct {
 	Enabled  bool
 	MaxAge   time.Duration
 	Interval time.Duration
+	MediaDir string // directory to scan; defaults to TempDir() if empty
 }
 
 // FileMediaStore is a pure in-memory implementation of MediaStore.
@@ -169,54 +171,76 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 	return nil
 }
 
-// CleanExpired removes all entries older than MaxAge.
-// Phase 1 (under lock): identify expired entries and remove from maps.
-// Phase 2 (no lock): delete files from disk to minimize lock contention.
+// CleanExpired scans the media temp directory and removes files older than MaxAge
+// based on filesystem modtime. This handles both tracked refs and orphaned files
+// from previous runs. In-memory refs pointing to deleted files are evicted.
 func (s *FileMediaStore) CleanExpired() int {
 	if s.cleanerCfg.MaxAge <= 0 {
 		return 0
 	}
 
-	// Phase 1: collect expired entries under lock
-	type expiredEntry struct {
-		ref  string
-		path string
+	mediaDir := s.cleanerCfg.MediaDir
+	if mediaDir == "" {
+		mediaDir = TempDir()
+	}
+	entries, err := os.ReadDir(mediaDir)
+	if err != nil {
+		return 0 // directory may not exist yet
 	}
 
-	s.mu.Lock()
 	cutoff := s.nowFunc().Add(-s.cleanerCfg.MaxAge)
-	var expired []expiredEntry
+	var removed int
 
-	for ref, entry := range s.refs {
-		if entry.storedAt.Before(cutoff) {
-			expired = append(expired, expiredEntry{ref: ref, path: entry.path})
-
-			if scope, ok := s.refToScope[ref]; ok {
-				if scopeRefs, ok := s.scopeToRefs[scope]; ok {
-					delete(scopeRefs, ref)
-					if len(scopeRefs) == 0 {
-						delete(s.scopeToRefs, scope)
-					}
-				}
-			}
-
-			delete(s.refs, ref)
-			delete(s.refToScope, ref)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
 		}
-	}
-	s.mu.Unlock()
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
 
-	// Phase 2: delete files without holding the lock
-	for _, e := range expired {
-		if err := os.Remove(e.path); err != nil && !os.IsNotExist(err) {
+		path := filepath.Join(mediaDir, e.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			logger.WarnCF("media", "cleanup: failed to remove file", map[string]any{
-				"path":  e.path,
+				"path":  path,
 				"error": err.Error(),
 			})
+			continue
 		}
+		removed++
+
+		// Evict in-memory refs pointing to this path
+		s.evictByPath(path)
 	}
 
-	return len(expired)
+	return removed
+}
+
+// evictByPath removes any in-memory ref that points to the given path.
+func (s *FileMediaStore) evictByPath(path string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for ref, entry := range s.refs {
+		if entry.path != path {
+			continue
+		}
+		if scope, ok := s.refToScope[ref]; ok {
+			if scopeRefs, ok := s.scopeToRefs[scope]; ok {
+				delete(scopeRefs, ref)
+				if len(scopeRefs) == 0 {
+					delete(s.scopeToRefs, scope)
+				}
+			}
+		}
+		delete(s.refs, ref)
+		delete(s.refToScope, ref)
+		break // paths are unique per ref
+	}
 }
 
 // Start begins the background cleanup goroutine if cleanup is enabled.
