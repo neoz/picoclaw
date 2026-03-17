@@ -26,8 +26,8 @@ type OwnerAwareTool interface {
 // DelegateRunner is the interface that the agent loop implements to allow
 // the delegate tool to invoke other agents without circular imports.
 type DelegateRunner interface {
-	RunDelegate(ctx context.Context, agentID, task, channel, chatID string) (string, error)
-	RunDelegateAsync(ctx context.Context, agentID, task, label, channel, chatID string) (string, error)
+	RunDelegate(ctx context.Context, agentID, task, channel, chatID, owner string) (string, error)
+	RunDelegateAsync(ctx context.Context, agentID, task, label, channel, chatID, owner string) (string, error)
 	ListAgents() []AgentInfo
 }
 

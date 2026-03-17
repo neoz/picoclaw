@@ -1,7 +1,9 @@
 package security
 
 import (
+	"encoding/base64"
 	"regexp"
+	"strings"
 )
 
 // LeakResult contains the outcome of scanning output for credential leaks.
@@ -101,10 +103,44 @@ func defaultLeakCategories() []leakCategory {
 			),
 			replacement: "[REDACTED_SECRET]",
 		},
+		// PII patterns (active when sensitivity > 0.5)
+		{
+			name:        "email",
+			alwaysOn:    false,
+			pattern:     regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`),
+			replacement: "[REDACTED_EMAIL]",
+		},
+		{
+			name:     "phone",
+			alwaysOn: false,
+			pattern: regexp.MustCompile(
+				`(?:^|\s)(` +
+					`\+?1?\s*\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}` + // US/CA
+					`|\+\d{1,3}[\s.\-]?\d{4,14}` + // international
+					`)(?:\s|$|[.,;])`,
+			),
+			replacement: " [REDACTED_PHONE] ",
+		},
+		{
+			name:        "ssn",
+			alwaysOn:    false,
+			pattern:     regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
+			replacement: "[REDACTED_SSN]",
+		},
+		{
+			name:        "credit_card",
+			alwaysOn:    false,
+			pattern:     regexp.MustCompile(`\b(?:\d{4}[\s\-]?){3}\d{4}\b`),
+			replacement: "[REDACTED_CARD]",
+		},
 	}
 }
 
+// base64Pattern matches base64 strings long enough to potentially contain secrets (>=20 chars).
+var base64Pattern = regexp.MustCompile(`[A-Za-z0-9+/]{20,}={0,2}`)
+
 // Scan checks content for credential patterns and returns a redacted version.
+// Also detects secrets hidden inside base64-encoded strings.
 func (ld *LeakDetector) Scan(content string) LeakResult {
 	var matched []string
 	redacted := content
@@ -116,6 +152,31 @@ func (ld *LeakDetector) Scan(content string) LeakResult {
 		if cat.pattern.MatchString(redacted) {
 			matched = append(matched, cat.name)
 			redacted = cat.pattern.ReplaceAllString(redacted, cat.replacement)
+		}
+	}
+
+	// Check for secrets hidden in base64-encoded strings.
+	if b64Matches := base64Pattern.FindAllString(redacted, 10); len(b64Matches) > 0 {
+		for _, b64 := range b64Matches {
+			decoded, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				decoded, err = base64.RawStdEncoding.DecodeString(b64)
+			}
+			if err != nil || len(decoded) < 10 {
+				continue
+			}
+			decodedStr := string(decoded)
+			// Check if decoded content contains any secret patterns.
+			for _, cat := range ld.categories {
+				if !cat.alwaysOn && ld.sensitivity <= 0.5 {
+					continue
+				}
+				if cat.pattern.MatchString(decodedStr) {
+					matched = append(matched, "base64:"+cat.name)
+					redacted = strings.Replace(redacted, b64, "[REDACTED_BASE64_"+strings.ToUpper(cat.name)+"]", 1)
+					break
+				}
+			}
 		}
 	}
 

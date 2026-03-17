@@ -133,7 +133,15 @@ func newAgentInstance(
 	if !cfg.IsRestrictToWorkspace() {
 		allowedDir = ""
 	}
-	registerIfAllowed(tools.NewReadFileTool(allowedDir))
+	readFileTool := tools.NewReadFileTool(allowedDir)
+	// Protect bootstrap files that form the system prompt from being read by the agent.
+	bootstrapNames := []string{"AGENTS.md", "SOUL.md", "USER.md", "IDENTITY.md"}
+	protectedPaths := make([]string, 0, len(bootstrapNames))
+	for _, name := range bootstrapNames {
+		protectedPaths = append(protectedPaths, filepath.Join(workspace, name))
+	}
+	readFileTool.ProtectFiles(protectedPaths)
+	registerIfAllowed(readFileTool)
 	registerIfAllowed(tools.NewWriteFileTool(allowedDir))
 	registerIfAllowed(tools.NewListDirTool(allowedDir))
 	execTool := tools.NewExecTool(workspace)

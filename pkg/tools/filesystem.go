@@ -9,6 +9,7 @@ import (
 )
 
 // checkAllowedDir validates that the resolved path is within the allowed directory or /tmp.
+// Symlinks are resolved to prevent escaping the allowed directory via symlink targets.
 func checkAllowedDir(path, allowedDir string) (string, error) {
 	var resolvedPath string
 	if filepath.IsAbs(path) {
@@ -21,10 +22,22 @@ func checkAllowedDir(path, allowedDir string) (string, error) {
 		resolvedPath = abs
 	}
 
+	// Resolve symlinks to get the real path. If the target doesn't exist yet
+	// (e.g. write_file to a new file), resolve the parent directory instead.
+	if real, err := filepath.EvalSymlinks(resolvedPath); err == nil {
+		resolvedPath = real
+	} else if real, err := filepath.EvalSymlinks(filepath.Dir(resolvedPath)); err == nil {
+		resolvedPath = filepath.Join(real, filepath.Base(resolvedPath))
+	}
+
 	if allowedDir != "" {
 		allowedAbs, err := filepath.Abs(allowedDir)
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve allowed directory: %w", err)
+		}
+		// Resolve symlinks on allowedDir too for consistent comparison.
+		if real, err := filepath.EvalSymlinks(allowedAbs); err == nil {
+			allowedAbs = real
 		}
 
 		inAllowed := strings.HasPrefix(resolvedPath, allowedAbs+string(filepath.Separator)) || resolvedPath == allowedAbs
@@ -45,11 +58,23 @@ func isUnderTmpDir(resolvedPath string) bool {
 }
 
 type ReadFileTool struct {
-	allowedDir string
+	allowedDir     string
+	protectedFiles map[string]bool // absolute paths that must not be read
 }
 
 func NewReadFileTool(allowedDir string) *ReadFileTool {
-	return &ReadFileTool{allowedDir: allowedDir}
+	return &ReadFileTool{
+		allowedDir:     allowedDir,
+		protectedFiles: make(map[string]bool),
+	}
+}
+
+// ProtectFiles marks the given absolute paths as unreadable.
+// Used to prevent the agent from reading bootstrap files that form the system prompt.
+func (t *ReadFileTool) ProtectFiles(paths []string) {
+	for _, p := range paths {
+		t.protectedFiles[filepath.Clean(p)] = true
+	}
 }
 
 func (t *ReadFileTool) Name() string {
@@ -82,6 +107,10 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]interface{})
 	resolvedPath, err := checkAllowedDir(path, t.allowedDir)
 	if err != nil {
 		return "", err
+	}
+
+	if t.protectedFiles[resolvedPath] {
+		return "", fmt.Errorf("access denied: %s is a protected system file", filepath.Base(resolvedPath))
 	}
 
 	content, err := os.ReadFile(resolvedPath)

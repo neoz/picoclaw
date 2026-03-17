@@ -32,9 +32,9 @@ var extToContentType = map[string]string{
 	".pdf":  "application/pdf",
 }
 
-// IsAllowedPath checks whether the given file path is under one of the allowed
-// directories (media temp dir, workspace, or system temp). This prevents
-// outbound media from exfiltrating arbitrary files.
+// IsAllowedPath checks whether the given file path is under the media temp dir
+// or workspace. Does NOT allow all of system temp to prevent the exfiltration
+// chain: write_file to /tmp -> send as media.
 func IsAllowedPath(path, workspace string) bool {
 	cleaned := filepath.Clean(path)
 	if !filepath.IsAbs(cleaned) {
@@ -51,9 +51,6 @@ func IsAllowedPath(path, workspace string) bool {
 	}
 
 	if isUnder(TempDir()) {
-		return true
-	}
-	if isUnder(os.TempDir()) {
 		return true
 	}
 	if workspace != "" {

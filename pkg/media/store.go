@@ -220,7 +220,7 @@ func (s *FileMediaStore) CleanExpired() int {
 	return removed
 }
 
-// evictByPath removes any in-memory ref that points to the given path.
+// evictByPath removes all in-memory refs that point to the given path.
 func (s *FileMediaStore) evictByPath(path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -239,7 +239,6 @@ func (s *FileMediaStore) evictByPath(path string) {
 		}
 		delete(s.refs, ref)
 		delete(s.refToScope, ref)
-		break // paths are unique per ref
 	}
 }
 
@@ -262,6 +261,13 @@ func (s *FileMediaStore) Start() {
 			"interval": s.cleanerCfg.Interval.String(),
 			"max_age":  s.cleanerCfg.MaxAge.String(),
 		})
+
+		// Run once at startup to purge stale files from prior runs.
+		if n := s.CleanExpired(); n > 0 {
+			logger.InfoCF("media", "cleanup: removed stale entries on startup", map[string]any{
+				"count": n,
+			})
+		}
 
 		go func() {
 			ticker := time.NewTicker(s.cleanerCfg.Interval)

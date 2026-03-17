@@ -14,6 +14,7 @@ type DelegateTool struct {
 	mu          sync.Mutex
 	channel     string
 	chatID      string
+	owner       string
 }
 
 func NewDelegateTool(runner DelegateRunner, allowAgents []string) *DelegateTool {
@@ -90,6 +91,12 @@ func (t *DelegateTool) SetContext(channel, chatID string) {
 	t.mu.Unlock()
 }
 
+func (t *DelegateTool) SetOwner(owner string) {
+	t.mu.Lock()
+	t.owner = owner
+	t.mu.Unlock()
+}
+
 func (t *DelegateTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	agentID, ok := args["agent_id"].(string)
 	if !ok || agentID == "" {
@@ -117,15 +124,15 @@ func (t *DelegateTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 
 	t.mu.Lock()
-	channel, chatID := t.channel, t.chatID
+	channel, chatID, owner := t.channel, t.chatID, t.owner
 	t.mu.Unlock()
 
 	switch mode {
 	case "sync":
-		return t.runner.RunDelegate(ctx, agentID, task, channel, chatID)
+		return t.runner.RunDelegate(ctx, agentID, task, channel, chatID, owner)
 	case "async":
 		label := fmt.Sprintf("delegate:%s", agentID)
-		return t.runner.RunDelegateAsync(ctx, agentID, task, label, channel, chatID)
+		return t.runner.RunDelegateAsync(ctx, agentID, task, label, channel, chatID, owner)
 	default:
 		return "", fmt.Errorf("invalid mode %q, must be sync or async", mode)
 	}

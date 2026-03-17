@@ -174,6 +174,7 @@ func buildSharedTools(cfg *config.Config, msgBus *bus.MessageBus, memDB *memory.
 
 	// Message tool
 	messageTool := tools.NewMessageTool()
+	messageTool.SetWorkspace(cfg.WorkspacePath())
 	messageTool.SetSendCallback(func(channel, chatID, content string, media []string) error {
 		msgBus.PublishOutbound(bus.OutboundMessage{
 			Channel: channel,
@@ -774,12 +775,39 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 					"iteration": iteration,
 				})
 
+			// Leak detector: scan tool arguments for credential exfiltration.
+			// Block execution when secrets are detected in arguments to prevent
+			// data exfiltration via any channel (curl, python, netcat, etc.).
+			if al.leakDetector != nil {
+				argsCheck := al.leakDetector.Scan(string(argsJSON))
+				if !argsCheck.Clean {
+					logger.WarnCF("security", "Credential leak blocked in tool arguments",
+						map[string]interface{}{
+							"tool":     tc.Name,
+							"patterns": argsCheck.Patterns,
+						})
+					blocked := fmt.Sprintf("[Tool call %s was blocked: sensitive data detected in arguments]", tc.Name)
+
+					wrappedResult := fmt.Sprintf("<tool-result source=\"%s\" trust=\"external\">\n%s\n</tool-result>", tc.Name, blocked)
+					toolResultMsg := providers.Message{
+						Role:       "tool",
+						Content:    wrappedResult,
+						ToolCallID: tc.ID,
+					}
+					messages = append(messages, toolResultMsg)
+					inst.Sessions.AddFullMessage(opts.SessionKey, toolResultMsg)
+					continue
+				}
+			}
+
 			result, err := inst.Tools.ExecuteWithContext(ctx, tc.Name, tc.Arguments, opts.Channel, opts.ChatID)
 			if err != nil {
 				result = fmt.Sprintf("Error: %v", err)
 			}
 
-			// Prompt guard: scan tool results for injection attempts
+			// Prompt guard: scan tool results for injection attempts.
+			// When detected, replace result with a sanitized warning to prevent
+			// indirect prompt injection via tool output.
 			if al.promptGuard != nil {
 				toolGuard := al.promptGuard.Scan(result)
 				if !toolGuard.Safe {
@@ -789,12 +817,17 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 							"patterns": toolGuard.Patterns,
 							"score":    toolGuard.Score,
 						})
+					result = fmt.Sprintf("[Tool result from %s was blocked: prompt injection detected]", tc.Name)
 				}
 			}
 
+			// Wrap tool results with trust boundary markers so the LLM can
+			// distinguish system-trusted content from external/untrusted data.
+			wrappedResult := fmt.Sprintf("<tool-result source=\"%s\" trust=\"external\">\n%s\n</tool-result>", tc.Name, result)
+
 			toolResultMsg := providers.Message{
 				Role:       "tool",
-				Content:    result,
+				Content:    wrappedResult,
 				ToolCallID: tc.ID,
 			}
 			messages = append(messages, toolResultMsg)
@@ -827,6 +860,7 @@ func (al *AgentLoop) updateToolContexts(inst *AgentInstance, channel, chatID, ow
 	if tool, ok := inst.Tools.Get("delegate"); ok {
 		if dt, ok := tool.(*tools.DelegateTool); ok {
 			dt.SetContext(channel, chatID)
+			dt.SetOwner(owner)
 		}
 	}
 	// Set owner on memory tools for scoped access
@@ -866,7 +900,7 @@ func (al *AgentLoop) initDelegateTools() {
 }
 
 // RunDelegate invokes a target agent's full LLM+tool loop synchronously.
-func (al *AgentLoop) RunDelegate(ctx context.Context, agentID, task, channel, chatID string) (string, error) {
+func (al *AgentLoop) RunDelegate(ctx context.Context, agentID, task, channel, chatID, owner string) (string, error) {
 	inst, ok := al.registry.Get(agentID)
 	if !ok {
 		return "", fmt.Errorf("agent %q not found", agentID)
@@ -886,12 +920,13 @@ func (al *AgentLoop) RunDelegate(ctx context.Context, agentID, task, channel, ch
 		DefaultResponse: "Delegated task completed with no output.",
 		EnableSummary:   false,
 		SendResponse:    false,
+		Owner:           owner,
 	})
 }
 
 // RunDelegateAsync invokes a target agent in the background and publishes the
 // result back via the message bus as a system message (same pattern as spawn).
-func (al *AgentLoop) RunDelegateAsync(ctx context.Context, agentID, task, label, channel, chatID string) (string, error) {
+func (al *AgentLoop) RunDelegateAsync(ctx context.Context, agentID, task, label, channel, chatID, owner string) (string, error) {
 	inst, ok := al.registry.Get(agentID)
 	if !ok {
 		return "", fmt.Errorf("agent %q not found", agentID)
@@ -908,6 +943,7 @@ func (al *AgentLoop) RunDelegateAsync(ctx context.Context, agentID, task, label,
 			DefaultResponse: "Delegated task completed with no output.",
 			EnableSummary:   false,
 			SendResponse:    false,
+			Owner:           owner,
 		})
 
 		content := result

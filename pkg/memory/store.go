@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// Store inserts or updates a memory entry. The key is globally unique:
-// any existing entry with the same key (regardless of owner) is replaced.
+// Store inserts or updates a memory entry. Only entries accessible to the
+// caller (shared or owned by the same owner) are replaced. Another user's
+// private entry with the same key is left untouched.
 // When updating an existing key, the original created_at is preserved.
 func (m *MemoryDB) Store(key, content, category, owner string) error {
 	category = validateCategory(category)
@@ -20,18 +21,27 @@ func (m *MemoryDB) Store(key, content, category, owner string) error {
 	}
 	defer tx.Rollback()
 
-	// Preserve created_at from any existing entry with this key.
+	// Preserve created_at from any accessible entry with this key.
 	var createdAt string
-	err = tx.QueryRow("SELECT created_at FROM memories WHERE key = ? LIMIT 1", key).Scan(&createdAt)
+	if owner != "" {
+		err = tx.QueryRow("SELECT created_at FROM memories WHERE key = ? AND (owner = '' OR owner = ?) LIMIT 1", key, owner).Scan(&createdAt)
+	} else {
+		err = tx.QueryRow("SELECT created_at FROM memories WHERE key = ? LIMIT 1", key).Scan(&createdAt)
+	}
 	if err != nil || createdAt == "" {
 		createdAt = now
 	}
 
-	// Delete any existing entries with this key (all owners) to prevent
-	// duplicates from the UNIQUE(key, owner) constraint allowing
-	// ("key", "") and ("key", "alice") to coexist.
-	if _, err := tx.Exec("DELETE FROM memories WHERE key = ?", key); err != nil {
-		return fmt.Errorf("store memory: %w", err)
+	// Delete only entries accessible to this owner (shared + own).
+	// Other users' private entries with the same key are preserved.
+	if owner != "" {
+		if _, err := tx.Exec("DELETE FROM memories WHERE key = ? AND (owner = '' OR owner = ?)", key, owner); err != nil {
+			return fmt.Errorf("store memory: %w", err)
+		}
+	} else {
+		if _, err := tx.Exec("DELETE FROM memories WHERE key = ?", key); err != nil {
+			return fmt.Errorf("store memory: %w", err)
+		}
 	}
 
 	if _, err := tx.Exec(`

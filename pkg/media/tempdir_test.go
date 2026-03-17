@@ -21,9 +21,11 @@ func TestIsAllowedPath_InMediaTempDirNested(t *testing.T) {
 }
 
 func TestIsAllowedPath_InSystemTempDir(t *testing.T) {
+	// System temp (outside media temp dir) should be rejected to prevent
+	// the exfiltration chain: write_file to /tmp -> send as media.
 	path := filepath.Join(os.TempDir(), "other_file.tmp")
-	if !IsAllowedPath(path, "") {
-		t.Error("path under system temp dir should be allowed")
+	if IsAllowedPath(path, "") {
+		t.Error("path under system temp dir (outside media temp) should be rejected")
 	}
 }
 
@@ -87,7 +89,7 @@ func TestIsAllowedPath_MediaTempDirRoot(t *testing.T) {
 }
 
 func TestIsAllowedPath_SystemTempDirRoot(t *testing.T) {
-	if !IsAllowedPath(os.TempDir(), "") {
-		t.Error("system temp dir root itself should be allowed")
+	if IsAllowedPath(os.TempDir(), "") {
+		t.Error("system temp dir root should be rejected (only media subdir allowed)")
 	}
 }

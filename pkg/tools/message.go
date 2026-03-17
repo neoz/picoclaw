@@ -3,7 +3,12 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 type SendCallback func(channel, chatID, content string, media []string) error
@@ -13,6 +18,7 @@ type MessageTool struct {
 	mu             sync.Mutex
 	defaultChannel string
 	defaultChatID  string
+	workspace      string
 }
 
 func NewMessageTool() *MessageTool {
@@ -66,6 +72,12 @@ func (t *MessageTool) SetSendCallback(callback SendCallback) {
 	t.sendCallback = callback
 }
 
+func (t *MessageTool) SetWorkspace(workspace string) {
+	t.mu.Lock()
+	t.workspace = workspace
+	t.mu.Unlock()
+}
+
 func (t *MessageTool) Execute(ctx context.Context, args map[string]interface{}) (string, error) {
 	content, ok := args["content"].(string)
 	if !ok {
@@ -101,9 +113,45 @@ func (t *MessageTool) Execute(ctx context.Context, args map[string]interface{}) 
 		return "Error: Message sending not configured", nil
 	}
 
+	// Validate media paths at the tool layer before reaching any channel.
+	// Only allow files under the media temp dir or workspace to prevent
+	// exfiltration of arbitrary files via /tmp staging.
+	for _, path := range media {
+		if !isAllowedMediaPath(path, t.workspace) {
+			return fmt.Sprintf("Error: media path not allowed: %s", path), nil
+		}
+	}
+
 	if err := t.sendCallback(channel, chatID, content, media); err != nil {
 		return fmt.Sprintf("Error sending message: %v", err), nil
 	}
 
 	return fmt.Sprintf("Message sent to %s:%s", channel, chatID), nil
+}
+
+// isAllowedMediaPath validates that a media path is under the media temp dir
+// or workspace. Unlike media.IsAllowedPath, this does NOT allow all of /tmp
+// to prevent the exfiltration chain: write_file to /tmp -> message with media.
+func isAllowedMediaPath(path, workspace string) bool {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		abs, err := filepath.Abs(cleaned)
+		if err != nil {
+			return false
+		}
+		cleaned = abs
+	}
+
+	isUnder := func(dir string) bool {
+		d := filepath.Clean(dir)
+		return strings.HasPrefix(cleaned, d+string(os.PathSeparator)) || cleaned == d
+	}
+
+	if isUnder(media.TempDir()) {
+		return true
+	}
+	if workspace != "" {
+		return isUnder(workspace)
+	}
+	return false
 }

@@ -50,9 +50,7 @@ func (info SkillInfo) validate() error {
 		}
 	}
 
-	if info.Description == "" {
-		errs = errors.Join(errs, errors.New("description is required"))
-	} else if len(info.Description) > MaxDescriptionLength {
+	if len(info.Description) > MaxDescriptionLength {
 		errs = errors.Join(errs, fmt.Errorf("description exceeds %d character", MaxDescriptionLength))
 	}
 	return errs

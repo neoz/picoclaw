@@ -1,6 +1,7 @@
 package security
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -199,5 +200,180 @@ func TestLeakDetector_RedactionPreservesContext(t *testing.T) {
 	}
 	if !strings.HasSuffix(result.Redacted, " and enjoy") {
 		t.Error("redaction should preserve surrounding text")
+	}
+}
+
+// --- PII detection tests ---
+
+func TestLeakDetector_Email(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	tests := []struct {
+		input string
+		clean bool
+	}{
+		{"contact me at alice@example.com for details", false},
+		{"send to user.name+tag@domain.co.uk please", false},
+		{"email is not here", true},
+		{"the @ symbol is used in code", true},
+	}
+
+	for _, tt := range tests {
+		result := ld.Scan(tt.input)
+		if result.Clean != tt.clean {
+			t.Errorf("Scan(%q): got Clean=%v, want %v (patterns=%v)", tt.input, result.Clean, tt.clean, result.Patterns)
+		}
+		if !tt.clean && !strings.Contains(result.Redacted, "[REDACTED_EMAIL]") {
+			t.Errorf("Scan(%q): redacted %q missing email tag", tt.input, result.Redacted)
+		}
+	}
+}
+
+func TestLeakDetector_Phone(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	tests := []struct {
+		input string
+		clean bool
+	}{
+		{"call me at +1 (555) 123-4567 today", false},
+		{"my number is 555-123-4567.", false},
+		{"reach us at +44 7911 123456 anytime", false},
+		{"port 8080 is open", true},
+	}
+
+	for _, tt := range tests {
+		result := ld.Scan(tt.input)
+		if result.Clean != tt.clean {
+			t.Errorf("Scan(%q): got Clean=%v, want %v (patterns=%v)", tt.input, result.Clean, tt.clean, result.Patterns)
+		}
+		if !tt.clean && !strings.Contains(result.Redacted, "[REDACTED_PHONE]") {
+			t.Errorf("Scan(%q): redacted %q missing phone tag", tt.input, result.Redacted)
+		}
+	}
+}
+
+func TestLeakDetector_SSN(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	tests := []struct {
+		input string
+		clean bool
+	}{
+		{"SSN: 123-45-6789", false},
+		{"my social is 999-88-7777 ok", false},
+		{"date 2024-01-15 is fine", true},
+		{"code 123-456-789 not SSN format", true},
+	}
+
+	for _, tt := range tests {
+		result := ld.Scan(tt.input)
+		if result.Clean != tt.clean {
+			t.Errorf("Scan(%q): got Clean=%v, want %v (patterns=%v)", tt.input, result.Clean, tt.clean, result.Patterns)
+		}
+		if !tt.clean && !strings.Contains(result.Redacted, "[REDACTED_SSN]") {
+			t.Errorf("Scan(%q): redacted %q missing SSN tag", tt.input, result.Redacted)
+		}
+	}
+}
+
+func TestLeakDetector_CreditCard(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	tests := []struct {
+		input string
+		clean bool
+	}{
+		{"card: 4111 1111 1111 1111", false},
+		{"pay with 4111-1111-1111-1111 please", false},
+		{"card 4111111111111111 on file", false},
+		{"order #12345678 confirmed", true},
+	}
+
+	for _, tt := range tests {
+		result := ld.Scan(tt.input)
+		if result.Clean != tt.clean {
+			t.Errorf("Scan(%q): got Clean=%v, want %v (patterns=%v)", tt.input, result.Clean, tt.clean, result.Patterns)
+		}
+		if !tt.clean && !strings.Contains(result.Redacted, "[REDACTED_CARD]") {
+			t.Errorf("Scan(%q): redacted %q missing card tag", tt.input, result.Redacted)
+		}
+	}
+}
+
+func TestLeakDetector_PIIAtLowSensitivity(t *testing.T) {
+	ld := NewLeakDetector(0.5) // PII patterns are alwaysOn=false
+
+	result := ld.Scan("contact alice@example.com or 555-123-4567")
+	if !result.Clean {
+		t.Errorf("PII should not be detected at sensitivity 0.5, got patterns=%v", result.Patterns)
+	}
+}
+
+// --- Base64-encoded secret tests ---
+
+func TestLeakDetector_Base64EncodedAPIKey(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	// Encode a real-looking OpenAI key in base64
+	secret := "sk-abcdefghij1234567890abcdef"
+	encoded := base64.StdEncoding.EncodeToString([]byte(secret))
+
+	result := ld.Scan("the encoded key is " + encoded)
+	if result.Clean {
+		t.Errorf("base64-encoded API key should be detected, got Clean=true")
+	}
+
+	found := false
+	for _, p := range result.Patterns {
+		if strings.HasPrefix(p, "base64:") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected base64:* pattern, got %v", result.Patterns)
+	}
+}
+
+func TestLeakDetector_Base64EncodedDatabaseURL(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	secret := "postgres://admin:secretpass@db.example.com/prod"
+	encoded := base64.StdEncoding.EncodeToString([]byte(secret))
+
+	result := ld.Scan("db config: " + encoded)
+	if result.Clean {
+		t.Error("base64-encoded database URL should be detected")
+	}
+	if !strings.Contains(result.Redacted, "[REDACTED_BASE64_") {
+		t.Errorf("redacted should contain base64 tag, got %q", result.Redacted)
+	}
+}
+
+func TestLeakDetector_Base64Innocent(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	// Base64 of "hello world, this is normal text" - no secrets inside
+	innocent := base64.StdEncoding.EncodeToString([]byte("hello world, this is normal text"))
+
+	result := ld.Scan("data: " + innocent)
+	// Should not flag base64: patterns (only plain text patterns if they match)
+	for _, p := range result.Patterns {
+		if strings.HasPrefix(p, "base64:") {
+			t.Errorf("innocent base64 should not trigger base64 detection, got pattern %q", p)
+		}
+	}
+}
+
+func TestLeakDetector_Base64TooShort(t *testing.T) {
+	ld := NewLeakDetector(0.7)
+
+	// Short base64 strings should be ignored
+	result := ld.Scan("token: abc123def456")
+	for _, p := range result.Patterns {
+		if strings.HasPrefix(p, "base64:") {
+			t.Errorf("short strings should not trigger base64 scan, got pattern %q", p)
+		}
 	}
 }
