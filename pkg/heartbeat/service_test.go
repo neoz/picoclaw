@@ -171,7 +171,10 @@ func TestStartIdempotent(t *testing.T) {
 	if err := hs.Start(); err != nil {
 		t.Fatalf("first start failed: %v", err)
 	}
-	defer hs.Stop()
+	defer func() {
+		hs.Stop()
+		time.Sleep(50 * time.Millisecond) // wait for goroutine to exit after stop
+	}()
 
 	// Second start should be a no-op
 	if err := hs.Start(); err != nil {
@@ -185,6 +188,53 @@ func TestStopBeforeStart(t *testing.T) {
 
 	// Should not panic
 	hs.Stop()
+}
+
+func TestRunLoop_RestartBeforeFirstHeartbeat(t *testing.T) {
+	ws := tempWorkspace(t)
+	interval := 2 // 2 seconds
+
+	// Simulate first start: no last heartbeat file exists.
+	// runLoop should save a reference timestamp on first start.
+	hs1 := NewHeartbeatService(ws, interval, true)
+	hs1.SetOnHeartbeat(func(string) (string, error) { return "HEARTBEAT_OK", nil })
+
+	hs1.Start()
+	// Run for 1 second (half the interval), then stop before heartbeat fires
+	time.Sleep(1 * time.Second)
+	hs1.Stop()
+
+	// Verify that runLoop saved a reference timestamp even though no heartbeat fired
+	ref := hs1.loadLastHeartbeat()
+	if ref.IsZero() {
+		t.Fatal("expected reference timestamp to be saved on first start")
+	}
+
+	// Simulate restart: create a new service instance (same workspace)
+	hs2 := NewHeartbeatService(ws, interval, true)
+	hs2.stopChan = make(chan struct{})
+
+	var callCount atomic.Int32
+	hs2.SetOnHeartbeat(func(string) (string, error) {
+		callCount.Add(1)
+		return "HEARTBEAT_OK", nil
+	})
+
+	hs2.Start()
+	defer hs2.Stop()
+
+	// The remaining interval should be ~1s (not the full 2s).
+	// At 800ms after restart, heartbeat should NOT have fired yet.
+	time.Sleep(500 * time.Millisecond)
+	if callCount.Load() > 0 {
+		t.Fatal("heartbeat fired too early after restart")
+	}
+
+	// By 1.5s after restart the remaining ~1s should have elapsed.
+	time.Sleep(1 * time.Second)
+	if callCount.Load() < 1 {
+		t.Fatal("expected heartbeat to fire using remaining interval after restart, not full interval")
+	}
 }
 
 func TestCheckHeartbeat_NilCallback(t *testing.T) {

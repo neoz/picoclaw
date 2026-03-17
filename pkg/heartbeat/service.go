@@ -97,6 +97,10 @@ func (hs *HeartbeatService) runLoop() {
 		} else {
 			remaining = 0
 		}
+	} else {
+		// First start: save current time as reference so restarts before the
+		// first heartbeat fires still know when the interval began counting.
+		hs.saveLastHeartbeat()
 	}
 
 	// Wait for the remaining partial interval first
