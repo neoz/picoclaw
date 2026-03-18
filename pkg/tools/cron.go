@@ -18,20 +18,24 @@ type JobExecutor interface {
 
 // CronTool provides scheduling capabilities for the agent
 type CronTool struct {
-	cronService *cron.CronService
-	executor    JobExecutor
-	msgBus      *bus.MessageBus
-	channel     string
-	chatID      string
-	mu          sync.RWMutex
+	cronService   *cron.CronService
+	executor      JobExecutor
+	msgBus        *bus.MessageBus
+	reportChannel string
+	reportChatID  string
+	channel       string
+	chatID        string
+	mu            sync.RWMutex
 }
 
 // NewCronTool creates a new CronTool
-func NewCronTool(cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus) *CronTool {
+func NewCronTool(cronService *cron.CronService, executor JobExecutor, msgBus *bus.MessageBus, reportChannel, reportChatID string) *CronTool {
 	return &CronTool{
-		cronService: cronService,
-		executor:    executor,
-		msgBus:      msgBus,
+		cronService:   cronService,
+		executor:      executor,
+		msgBus:        msgBus,
+		reportChannel: reportChannel,
+		reportChatID:  reportChatID,
 	}
 }
 
@@ -278,7 +282,13 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		return fmt.Sprintf("Error: %v", err)
 	}
 
-	// Response is automatically sent via MessageBus by AgentLoop
-	_ = response // Will be sent by AgentLoop
+	// Send agent response to the configured report channel
+	if response != "" && t.reportChannel != "" && t.reportChatID != "" {
+		t.msgBus.PublishOutbound(bus.OutboundMessage{
+			Channel: t.reportChannel,
+			ChatID:  t.reportChatID,
+			Content: response,
+		})
+	}
 	return "ok"
 }

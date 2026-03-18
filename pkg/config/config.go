@@ -16,12 +16,18 @@ type SecretsConfig struct {
 	Encrypt bool `json:"encrypt" env:"PICOCLAW_SECRETS_ENCRYPT"`
 }
 
+type ReportConfig struct {
+	Channel string `json:"channel" env:"PICOCLAW_REPORT_CHANNEL"`
+	ChatID  string `json:"chat_id" env:"PICOCLAW_REPORT_CHAT_ID"`
+}
+
 type Config struct {
 	Agents    AgentsConfig    `json:"agents"`
 	Channels  ChannelsConfig  `json:"channels"`
 	Providers ProvidersConfig `json:"providers"`
 	Gateway   GatewayConfig   `json:"gateway"`
 	Tools     ToolsConfig     `json:"tools"`
+	Report    ReportConfig    `json:"report"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Memory    MemoryConfig    `json:"memory"`
 	Cost      CostConfig      `json:"cost"`
@@ -82,9 +88,8 @@ type MemoryConfig struct {
 }
 
 type HeartbeatConfig struct {
-	Enabled         bool   `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
-	IntervalSeconds int    `json:"interval_seconds" env:"PICOCLAW_HEARTBEAT_INTERVAL_SECONDS"`
-	Channel         string `json:"channel" env:"PICOCLAW_HEARTBEAT_CHANNEL"`
+	Enabled         bool `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
+	IntervalSeconds int  `json:"interval_seconds" env:"PICOCLAW_HEARTBEAT_INTERVAL_SECONDS"`
 }
 
 type AgentsConfig struct {
@@ -386,7 +391,6 @@ func DefaultConfig() *Config {
 		Heartbeat: HeartbeatConfig{
 			Enabled:         false,
 			IntervalSeconds: 1800,
-			Channel:         "telegram",
 		},
 		Tools: ToolsConfig{
 			Exec: ExecToolsConfig{

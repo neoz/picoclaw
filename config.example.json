@@ -181,10 +181,13 @@
     "host": "0.0.0.0",
     "port": 18790
   },
+  "report": {
+    "channel": "",
+    "chat_id": ""
+  },
   "heartbeat": {
     "enabled": false,
-    "interval_seconds": 1800,
-    "channel": "telegram"
+    "interval_seconds": 1800
   },
   "memory": {
     "retention_days": {
