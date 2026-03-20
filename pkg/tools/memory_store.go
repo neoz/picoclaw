@@ -29,7 +29,13 @@ func (t *MemoryStoreTool) Name() string {
 }
 
 func (t *MemoryStoreTool) Description() string {
-	return `Store a memory entry. Always write content in English, concise summary form regardless of conversation language. Categories: core (permanent, default), daily (30d), conversation (7d), custom (90d). Existing key = update. Set shared=true for all-user visibility. Include relations for knowledge graph and tags for classification.`
+	return `Store a memory entry. Always write content in English, concise summary form regardless of conversation language.
+Categories determine retention and purpose:
+- core (permanent): User identity, preferences, permanent knowledge (e.g. name, birthday, language preference)
+- daily (30d decay): Daily notes, what happened today, ephemeral observations
+- conversation (7d decay): Short-lived conversation context, recent discussion points
+- custom (90d decay): Agent conclusions, derived knowledge, project notes, learned patterns
+Existing key = update. Set shared=true for all-user visibility. Include relations for knowledge graph and tags for classification.`
 }
 
 func (t *MemoryStoreTool) Parameters() map[string]interface{} {
@@ -46,7 +52,7 @@ func (t *MemoryStoreTool) Parameters() map[string]interface{} {
 			},
 			"category": map[string]interface{}{
 				"type":        "string",
-				"description": "Memory category: core (permanent), daily (30d), conversation (7d), custom (90d). Default: core",
+				"description": "Memory category. core: permanent facts like user identity, preferences, lasting knowledge. daily: daily observations and notes (30d decay). conversation: ephemeral chat context (7d decay). custom: agent inferences, project notes, derived knowledge (90d decay). Default: core",
 				"enum":        []string{"core", "daily", "conversation", "custom"},
 			},
 			"shared": map[string]interface{}{
