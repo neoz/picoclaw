@@ -9,12 +9,12 @@ import (
 )
 
 type MemoryForgetTool struct {
-	db    *memory.MemoryDB
+	db    memory.MemoryBackend
 	owner string
 	mu    sync.Mutex
 }
 
-func NewMemoryForgetTool(db *memory.MemoryDB) *MemoryForgetTool {
+func NewMemoryForgetTool(db memory.MemoryBackend) *MemoryForgetTool {
 	return &MemoryForgetTool{db: db}
 }
 

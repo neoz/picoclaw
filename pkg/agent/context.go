@@ -27,7 +27,7 @@ type SubagentInfo struct {
 type ContextBuilder struct {
 	workspace       string
 	skillsLoader    *skills.SkillsLoader
-	memoryDB        *memory.MemoryDB
+	memoryDB        memory.MemoryBackend
 	memoryCfg       *config.MemoryConfig
 	subagents       []SubagentInfo
 	instructions    string
@@ -56,8 +56,8 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 }
 
 
-// SetMemoryDB sets the memory database and config for relevance-filtered context.
-func (cb *ContextBuilder) SetMemoryDB(db *memory.MemoryDB, cfg *config.MemoryConfig) {
+// SetMemoryDB sets the memory backend and config for relevance-filtered context.
+func (cb *ContextBuilder) SetMemoryDB(db memory.MemoryBackend, cfg *config.MemoryConfig) {
 	cb.memoryDB = db
 	cb.memoryCfg = cfg
 }

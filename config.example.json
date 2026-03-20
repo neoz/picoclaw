@@ -225,6 +225,11 @@
   },
   "memory": {
     "enabled": true,
+    "backend": "sage",
+    "sage": {
+      "base_url": "http://localhost:8080",
+      "keys_dir": ""
+    },
     "retention_days": {
       "daily": 30,
       "conversation": 7,

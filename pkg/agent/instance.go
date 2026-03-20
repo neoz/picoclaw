@@ -57,7 +57,7 @@ func newAgentInstance(
 	agentCfg config.AgentConfig,
 	cfg *config.Config,
 	shared *sharedTools,
-	memDB *memory.MemoryDB,
+	memBackend memory.MemoryBackend,
 	memoryCfg *config.MemoryConfig,
 	costTracker *cost.CostTracker,
 	msgBus *bus.MessageBus,
@@ -220,8 +220,8 @@ func newAgentInstance(
 		contextBuilder.SetInstructions(agentCfg.Instructions, agentCfg.Context)
 	}
 
-	if memDB != nil {
-		contextBuilder.SetMemoryDB(memDB, memoryCfg)
+	if memBackend != nil {
+		contextBuilder.SetMemoryDB(memBackend, memoryCfg)
 	}
 
 	logger.InfoCF("agent", fmt.Sprintf("Agent instance created: %s (model=%s)", agentCfg.ID, model),

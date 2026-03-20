@@ -23,6 +23,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/sage"
 	"github.com/sipeed/picoclaw/pkg/security"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -34,7 +35,8 @@ type AgentLoop struct {
 	registry    *AgentRegistry
 	running     atomic.Bool
 	summarizing sync.Map
-	memoryDB    *memory.MemoryDB
+	memoryDB    *memory.MemoryDB          // SQLite lifecycle (snapshot, close, retention)
+	memBackend  memory.MemoryBackend       // backend used by tools and context builder
 	memoryCfg    *config.MemoryConfig
 	costTracker  *cost.CostTracker
 	promptGuard       *security.PromptGuard
@@ -96,6 +98,26 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 		}
 	}
 
+	// Select memory backend
+	var memBackend memory.MemoryBackend
+	if cfg.Memory.Backend == "sage" {
+		keysDir := cfg.Memory.Sage.KeysDir
+		if keysDir == "" {
+			keysDir = filepath.Join(workspace, "sage_keys")
+		}
+		baseURL := cfg.Memory.Sage.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		sageClient := sage.NewClient(baseURL)
+		identityMgr := sage.NewIdentityManager(keysDir, sageClient)
+		memBackend = sage.NewSageBackend(sageClient, identityMgr)
+		logger.InfoCF("memory", "Using Sage memory backend",
+			map[string]interface{}{"base_url": baseURL, "keys_dir": keysDir})
+	} else if memDB != nil {
+		memBackend = memDB
+	}
+
 	// Initialize shared cost tracker
 	var costTracker *cost.CostTracker
 	if cfg.Cost.Enabled {
@@ -108,7 +130,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 	}
 
 	// Build shared tool instances
-	shared := buildSharedTools(cfg, msgBus, memDB, costTracker, workspace)
+	shared := buildSharedTools(cfg, msgBus, memBackend, costTracker, workspace)
 
 	// Build agent registry
 	registry := NewAgentRegistry()
@@ -123,7 +145,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 	}
 
 	for _, agentCfg := range agentList {
-		inst, err := newAgentInstance(agentCfg, cfg, shared, memDB, &cfg.Memory, costTracker, msgBus, executor)
+		inst, err := newAgentInstance(agentCfg, cfg, shared, memBackend, &cfg.Memory, costTracker, msgBus, executor)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create agent %q: %w", agentCfg.ID, err)
 		}
@@ -139,6 +161,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 		registry:    registry,
 		summarizing: sync.Map{},
 		memoryDB:    memDB,
+		memBackend:  memBackend,
 		memoryCfg:   &cfg.Memory,
 		costTracker: costTracker,
 	}
@@ -160,7 +183,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 }
 
 // buildSharedTools creates tool instances that are shared across all agents.
-func buildSharedTools(cfg *config.Config, msgBus *bus.MessageBus, memDB *memory.MemoryDB, costTracker *cost.CostTracker, workspace string) *sharedTools {
+func buildSharedTools(cfg *config.Config, msgBus *bus.MessageBus, memBackend memory.MemoryBackend, costTracker *cost.CostTracker, workspace string) *sharedTools {
 	shared := &sharedTools{}
 
 	// Web search / fetch tools
@@ -202,10 +225,10 @@ func buildSharedTools(cfg *config.Config, msgBus *bus.MessageBus, memDB *memory.
 	}
 
 	// Memory tools
-	if memDB != nil {
-		shared.memStore = tools.NewMemoryStoreTool(memDB)
-		shared.memForget = tools.NewMemoryForgetTool(memDB)
-		shared.memSearch = tools.NewMemorySearchTool(memDB)
+	if memBackend != nil {
+		shared.memStore = tools.NewMemoryStoreTool(memBackend)
+		shared.memForget = tools.NewMemoryForgetTool(memBackend)
+		shared.memSearch = tools.NewMemorySearchTool(memBackend)
 	}
 
 	// Cost tool

@@ -144,6 +144,16 @@ func Open(workspace string) (*MemoryDB, error) {
 	return mdb, nil
 }
 
+// SetTags is a no-op for SQLite (tags are a Sage-only feature).
+func (m *MemoryDB) SetTags(_ string, _ []string) error {
+	return nil
+}
+
+// SetDomain is a no-op for SQLite (domain tags are a Sage-only feature).
+func (m *MemoryDB) SetDomain(_ string, _ string) error {
+	return nil
+}
+
 // Close closes the database connection.
 func (m *MemoryDB) Close() error {
 	if m.db != nil {

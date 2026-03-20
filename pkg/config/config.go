@@ -79,8 +79,15 @@ type MemoryRetentionConfig struct {
 	Custom       int `json:"custom" env:"PICOCLAW_MEMORY_RETENTION_CUSTOM"`
 }
 
+type SageMemoryConfig struct {
+	BaseURL string `json:"base_url" env:"PICOCLAW_SAGE_BASE_URL"`
+	KeysDir string `json:"keys_dir" env:"PICOCLAW_SAGE_KEYS_DIR"`
+}
+
 type MemoryConfig struct {
 	Enabled        *bool                 `json:"enabled,omitempty" env:"PICOCLAW_MEMORY_ENABLED"`
+	Backend        string                `json:"backend" env:"PICOCLAW_MEMORY_BACKEND"`
+	Sage           SageMemoryConfig      `json:"sage"`
 	RetentionDays  MemoryRetentionConfig `json:"retention_days"`
 	SearchLimit    int                   `json:"search_limit" env:"PICOCLAW_MEMORY_SEARCH_LIMIT"`
 	MinRelevance   float64               `json:"min_relevance" env:"PICOCLAW_MEMORY_MIN_RELEVANCE"`
@@ -433,6 +440,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Memory: MemoryConfig{
+			Backend: "local",
+			Sage: SageMemoryConfig{
+				BaseURL: "http://localhost:8080",
+			},
 			RetentionDays: MemoryRetentionConfig{
 				Daily:        30,
 				Conversation: 7,

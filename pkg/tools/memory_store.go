@@ -9,12 +9,12 @@ import (
 )
 
 type MemoryStoreTool struct {
-	db    *memory.MemoryDB
+	db    memory.MemoryBackend
 	owner string
 	mu    sync.Mutex
 }
 
-func NewMemoryStoreTool(db *memory.MemoryDB) *MemoryStoreTool {
+func NewMemoryStoreTool(db memory.MemoryBackend) *MemoryStoreTool {
 	return &MemoryStoreTool{db: db}
 }
 
@@ -29,7 +29,7 @@ func (t *MemoryStoreTool) Name() string {
 }
 
 func (t *MemoryStoreTool) Description() string {
-	return `Store a memory entry. Categories: core (permanent, default), daily (30d), conversation (7d), custom (90d). Existing key = update. Set shared=true for all-user visibility. Include relations for knowledge graph (e.g. relations=[{"source":"Alice","relation":"works_on","target":"PicoClaw"}]).`
+	return `Store a memory entry. Always write content in English, concise summary form regardless of conversation language. Categories: core (permanent, default), daily (30d), conversation (7d), custom (90d). Existing key = update. Set shared=true for all-user visibility. Include relations for knowledge graph and tags for classification.`
 }
 
 func (t *MemoryStoreTool) Parameters() map[string]interface{} {
@@ -65,6 +65,15 @@ func (t *MemoryStoreTool) Parameters() map[string]interface{} {
 					},
 				},
 			},
+			"tags": map[string]interface{}{
+				"type":        "array",
+				"description": "Tags for classifying this memory (e.g. [\"project\", \"deadline\", \"IoT\", \"security\"])",
+				"items":       map[string]interface{}{"type": "string"},
+			},
+			"topic": map[string]interface{}{
+				"type":        "string",
+				"description": "Domain topic for memory organization. Options: profile (user identity), preference (user preferences), daily (daily notes), project (ongoing work), learning (derived knowledge), task (action items), conversation (chat context), knowledge (shared facts), rules (shared agreements)",
+			},
 		},
 		"required": []string{"key", "content"},
 	}
@@ -95,18 +104,29 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args map[string]interface
 		owner = ""
 	}
 
-	// Clear stale relations before upsert (handles key update case)
+	// Buffer domain topic BEFORE store
+	if topic, ok := args["topic"].(string); ok && topic != "" {
+		_ = t.db.SetDomain(key, topic)
+	}
+
+	// Buffer tags BEFORE store so backends (e.g. Sage) can include them
+	if tagList, ok := args["tags"].([]interface{}); ok && len(tagList) > 0 {
+		var tags []string
+		for _, t := range tagList {
+			if s, ok := t.(string); ok && s != "" {
+				tags = append(tags, s)
+			}
+		}
+		if len(tags) > 0 {
+			_ = t.db.SetTags(key, tags)
+		}
+	}
+
+	// Buffer relations BEFORE store so backends (e.g. Sage) can include
+	// them in a single submission rather than re-submitting per relation.
+	relCount := 0
 	if relations, ok := args["relations"].([]interface{}); ok && len(relations) > 0 {
 		_ = t.db.RemoveRelationsByMemoryKey(key)
-	}
-
-	if err := t.db.Store(key, content, category, owner); err != nil {
-		return fmt.Sprintf("Error storing memory: %v", err), nil
-	}
-
-	// Process relations if provided
-	relCount := 0
-	if relations, ok := args["relations"].([]interface{}); ok {
 		for _, r := range relations {
 			rel, ok := r.(map[string]interface{})
 			if !ok {
@@ -123,6 +143,10 @@ func (t *MemoryStoreTool) Execute(ctx context.Context, args map[string]interface
 			}
 			relCount++
 		}
+	}
+
+	if err := t.db.Store(key, content, category, owner); err != nil {
+		return fmt.Sprintf("Error storing memory: %v", err), nil
 	}
 
 	if relCount > 0 {

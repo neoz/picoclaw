@@ -9,7 +9,14 @@ SKILLS_BUNDLE="$PICOCLAW_HOME/skills-bundle"
 # Fix ownership when mounted as Docker volumes
 chown picoclaw:picoclaw "$PICOCLAW_HOME"
 chown picoclaw:picoclaw "$PICOCLAW_HOME/config.json" 2>/dev/null || true
-chown picoclaw:picoclaw "$PICOCLAW_HOME/.secret_key" 2>/dev/null || true
+# .secret_key: only chown if it's a regular file (bind-mount of missing host file creates a directory)
+if [ -f "$PICOCLAW_HOME/.secret_key" ]; then
+    chown picoclaw:picoclaw "$PICOCLAW_HOME/.secret_key" 2>/dev/null || true
+fi
+
+# Ensure workspace root is writable before su-exec mkdir
+mkdir -p "$WORKSPACE"
+chown picoclaw:picoclaw "$WORKSPACE"
 
 # Initialize workspace directories
 su-exec picoclaw mkdir -p "$WORKSPACE/memory" "$WORKSPACE/skills"
