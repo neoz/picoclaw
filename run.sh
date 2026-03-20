@@ -131,12 +131,13 @@ start_mcp_infra() {
             --name "$SAGE_CONTAINER" \
             --network "$NETWORK_NAME" \
             --restart unless-stopped \
+            --entrypoint sage-gui \
             -p "$SAGE_PORT:$SAGE_PORT" \
             -v "$SAGE_VOLUME:/root/.sage" \
             -v "$SAGE_CONFIG:/root/.sage/config.yaml:ro" \
             -e TZ=Asia/Ho_Chi_Minh \
             "$SAGE_IMAGE" \
-            sage-gui serve
+            serve
         echo "Sage is running on port $SAGE_PORT"
     fi
 }
