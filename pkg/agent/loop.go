@@ -61,10 +61,16 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, executor tools.Com
 	os.MkdirAll(workspace, 0755)
 
 	// Initialize shared memory database
-	memDB, err := memory.Open(workspace)
-	if err != nil {
-		logger.ErrorCF("memory", "Failed to open memory database, continuing without memory",
-			map[string]interface{}{"error": err.Error()})
+	var memDB *memory.MemoryDB
+	if cfg.Memory.IsEnabled() {
+		var err error
+		memDB, err = memory.Open(workspace)
+		if err != nil {
+			logger.ErrorCF("memory", "Failed to open memory database, continuing without memory",
+				map[string]interface{}{"error": err.Error()})
+		}
+	} else {
+		logger.InfoC("memory", "Built-in memory disabled by config")
 	}
 
 	if memDB != nil {
@@ -274,6 +280,13 @@ func (al *AgentLoop) Stop() {
 
 // Shutdown performs cleanup: optional snapshot export and closes the memory DB.
 func (al *AgentLoop) Shutdown() {
+	// Shutdown MCP managers for all agents
+	for _, inst := range al.registry.List() {
+		if inst.MCPManager != nil {
+			inst.MCPManager.Shutdown()
+		}
+	}
+
 	if al.memoryDB == nil {
 		return
 	}

@@ -38,7 +38,41 @@
         "max_tokens": 16384,
         "temperature": 0.3,
         "max_tool_iterations": 30,
-        "skills": ["coding"]
+        "skills": ["coding"],
+        "mcp": {
+          "servers": {
+            "filesystem": {
+              "transport": "stdio",
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/workspace"],
+              "allowed_tools": ["read_file", "write_file", "list_directory"]
+            },
+            "sage": {
+              "transport": "stdio",
+              "command": "docker",
+              "args": ["exec", "-i", "sage", "sage-gui", "mcp"],
+              "env": {
+                "SAGE_PROVIDER": "picoclaw"
+              }
+            },
+            "github": {
+              "transport": "streamable-http",
+              "url": "https://mcp.example.com/github",
+              "headers": {
+                "Authorization": "Bearer ${GITHUB_TOKEN}"
+              },
+              "denied_tools": ["delete_repository"]
+            },
+            "analytics": {
+              "transport": "sse",
+              "url": "https://mcp.example.com/analytics/sse",
+              "headers": {
+                "Authorization": "Bearer ${ANALYTICS_API_KEY}"
+              },
+              "allowed_tools": ["query", "list_dashboards"]
+            }
+          }
+        }
       },
       {
         "id": "qa",
@@ -190,6 +224,7 @@
     "interval_seconds": 1800
   },
   "memory": {
+    "enabled": true,
     "retention_days": {
       "daily": 30,
       "conversation": 7,

@@ -80,11 +80,20 @@ type MemoryRetentionConfig struct {
 }
 
 type MemoryConfig struct {
+	Enabled        *bool                 `json:"enabled,omitempty" env:"PICOCLAW_MEMORY_ENABLED"`
 	RetentionDays  MemoryRetentionConfig `json:"retention_days"`
 	SearchLimit    int                   `json:"search_limit" env:"PICOCLAW_MEMORY_SEARCH_LIMIT"`
 	MinRelevance   float64               `json:"min_relevance" env:"PICOCLAW_MEMORY_MIN_RELEVANCE"`
 	ContextTopK    int                   `json:"context_top_k" env:"PICOCLAW_MEMORY_CONTEXT_TOP_K"`
 	SnapshotOnExit bool                  `json:"snapshot_on_exit" env:"PICOCLAW_MEMORY_SNAPSHOT_ON_EXIT"`
+}
+
+// IsEnabled returns whether built-in memory is enabled. Defaults to true if not set.
+func (m *MemoryConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
 }
 
 type HeartbeatConfig struct {
@@ -114,6 +123,22 @@ type AgentConfig struct {
 	DeniedTools        []string         `json:"denied_tools,omitempty"`
 	MaxHistoryMessages int              `json:"max_history_messages,omitempty"`
 	Subagents          *SubagentsConfig `json:"subagents,omitempty"`
+	MCP                *MCPAgentConfig  `json:"mcp,omitempty"`
+}
+
+type MCPAgentConfig struct {
+	Servers map[string]MCPServerConfig `json:"servers"`
+}
+
+type MCPServerConfig struct {
+	Transport    string            `json:"transport"`
+	Command      string            `json:"command,omitempty"`
+	Args         []string          `json:"args,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
+	URL          string            `json:"url,omitempty"`
+	Headers      map[string]string `json:"headers,omitempty"`
+	AllowedTools []string          `json:"allowed_tools,omitempty"`
+	DeniedTools  []string          `json:"denied_tools,omitempty"`
 }
 
 type SubagentsConfig struct {

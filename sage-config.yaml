@@ -1,0 +1,6 @@
+embedding:
+  provider: ollama
+  base_url: http://ollama-proxy:11434
+  model: bge-m3
+  dimension: 1024
+rest_addr: ":8080"

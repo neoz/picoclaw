@@ -25,3 +25,8 @@ coverage.html
 # Ralph workspace
 ralph/
 .claude/
+models/bge-m3-Q4_k_m.gguf
+config.local.json
+chat.js
+memory-export/memory.db
+.env

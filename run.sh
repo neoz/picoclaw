@@ -9,6 +9,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.json"
 SECRET_KEY_FILE="$SCRIPT_DIR/.secret_key"
 SKILLS_DIR="/home/picoclaw/.picoclaw/workspace/skills"
+
+SAGE_IMAGE="ghcr.io/l33tdawg/sage:latest"
+SAGE_CONTAINER="sage"
+SAGE_VOLUME="sage-data"
+SAGE_PORT="8080"
+SAGE_CONFIG="$SCRIPT_DIR/sage-config.yaml"
+
+BGE_IMAGE="llama-cpp-server"
+BGE_CONTAINER="bge-m3"
+BGE_PORT="8081"
+
+PROXY_IMAGE="python:3.11-slim"
+PROXY_CONTAINER="ollama-proxy"
+PROXY_SCRIPT="$SCRIPT_DIR/ollama-proxy.py"
+
+NETWORK_NAME="picoclaw-net"
+
+# All MCP infra containers (start order: bge-m3 -> ollama-proxy -> sage)
+MCP_CONTAINERS=("$BGE_CONTAINER" "$PROXY_CONTAINER" "$SAGE_CONTAINER")
+
 ACTION=""
 BUILD=false
 CLEAN=false
@@ -38,6 +58,89 @@ if [ -z "$ACTION" ]; then
     fi
 fi
 
+# Helper: stop and remove a container if it exists
+stop_container() {
+    local name="$1"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
+        echo "Stopping $name..."
+        docker stop "$name" 2>/dev/null || true
+        docker rm -f "$name" 2>/dev/null || true
+    fi
+}
+
+# Helper: stop all MCP infra containers (reverse order)
+stop_mcp_infra() {
+    for (( i=${#MCP_CONTAINERS[@]}-1; i>=0; i-- )); do
+        stop_container "${MCP_CONTAINERS[$i]}"
+    done
+}
+
+# Helper: ensure shared network exists
+ensure_network() {
+    if ! docker network ls --format '{{.Name}}' | grep -q "^${NETWORK_NAME}$"; then
+        echo "Creating network $NETWORK_NAME..."
+        docker network create "$NETWORK_NAME"
+    fi
+}
+
+# Helper: start all MCP infra containers
+start_mcp_infra() {
+    ensure_network
+
+    # bge-m3: embedding model server
+    if ! docker ps --format '{{.Names}}' | grep -q "^${BGE_CONTAINER}$"; then
+        stop_container "$BGE_CONTAINER"
+        echo "Starting $BGE_CONTAINER..."
+        docker run -d \
+            --name "$BGE_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --restart unless-stopped \
+            -p "$BGE_PORT:$BGE_PORT" \
+            -v "$SCRIPT_DIR/models:/models" \
+            -e LLAMA_ARG_MODEL=/models/bge-m3-Q4_k_m.gguf \
+            -e LLAMA_ARG_HOST=0.0.0.0 \
+            -e LLAMA_ARG_PORT="$BGE_PORT" \
+            -e LLAMA_ARG_CTX_SIZE=8192 \
+            -e LLAMA_ARG_EMBEDDINGS=1 \
+            "$BGE_IMAGE"
+    fi
+
+    # ollama-proxy: translates Ollama API to llama.cpp
+    if ! docker ps --format '{{.Names}}' | grep -q "^${PROXY_CONTAINER}$"; then
+        stop_container "$PROXY_CONTAINER"
+        echo "Starting $PROXY_CONTAINER..."
+        docker run -d \
+            --name "$PROXY_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --restart unless-stopped \
+            -v "$PROXY_SCRIPT:/app/ollama-proxy.py:ro" \
+            -e UPSTREAM_URL="http://$BGE_CONTAINER:$BGE_PORT" \
+            -e LISTEN_PORT=11434 \
+            "$PROXY_IMAGE" \
+            python3 -u /app/ollama-proxy.py
+    fi
+
+    # sage: MCP memory server
+    if ! docker ps --format '{{.Names}}' | grep -q "^${SAGE_CONTAINER}$"; then
+        stop_container "$SAGE_CONTAINER"
+        if ! docker volume ls --format '{{.Name}}' | grep -q "^${SAGE_VOLUME}$"; then
+            docker volume create "$SAGE_VOLUME"
+        fi
+        echo "Starting $SAGE_CONTAINER..."
+        docker run -d \
+            --name "$SAGE_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --restart unless-stopped \
+            -p "$SAGE_PORT:$SAGE_PORT" \
+            -v "$SAGE_VOLUME:/root/.sage" \
+            -v "$SAGE_CONFIG:/root/.sage/config.yaml:ro" \
+            -e TZ=Asia/Ho_Chi_Minh \
+            "$SAGE_IMAGE" \
+            sage-gui serve
+        echo "Sage is running on port $SAGE_PORT"
+    fi
+}
+
 # --help: display usage
 if [ "$ACTION" = "help" ]; then
     echo "Usage: ./run.sh [options] [command]"
@@ -45,8 +148,8 @@ if [ "$ACTION" = "help" ]; then
     echo "Options:"
     echo "  --build, -b           Build Docker image (without restarting service)"
     echo "  --clean, -c           Remove workspace volume before run"
-    echo "  --stop, -s            Stop the container"
-    echo "  --restart, -r         Stop and restart the container"
+    echo "  --stop, -s            Stop all containers (picoclaw + MCP infra)"
+    echo "  --restart, -r         Stop and restart all containers"
     echo "  --force, -f           Rebuild image and clean volume"
     echo "  --help, -h            Show this help"
     echo ""
@@ -159,16 +262,11 @@ if [ "$ACTION" = "shell" ]; then
     exit 0
 fi
 
-# --stop: stop the container and exit
+# --stop: stop all containers and exit
 if [ "$ACTION" = "stop" ]; then
-    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "Stopping container..."
-        docker stop "$CONTAINER_NAME"
-        docker rm -f "$CONTAINER_NAME"
-        echo "Container '$CONTAINER_NAME' stopped."
-    else
-        echo "Container '$CONTAINER_NAME' is not running."
-    fi
+    stop_container "$CONTAINER_NAME"
+    stop_mcp_infra
+    echo "All containers stopped."
     exit 0
 fi
 
@@ -186,11 +284,8 @@ fi
 
 # --restart: stop then run again
 if [ "$ACTION" = "restart" ]; then
-    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        echo "Stopping container..."
-        docker stop "$CONTAINER_NAME"
-        docker rm -f "$CONTAINER_NAME"
-    fi
+    stop_container "$CONTAINER_NAME"
+    stop_mcp_infra
     ACTION="run"
 fi
 
@@ -216,10 +311,14 @@ fi
 # Ensure secret key file exists (prevents Docker from creating it as a directory)
 touch "$SECRET_KEY_FILE"
 
+# Start MCP infra (bge-m3 -> ollama-proxy -> sage)
+start_mcp_infra
+
 # Run the container
 echo "Starting container..."
 docker run -d \
     --name "$CONTAINER_NAME" \
+    --network "$NETWORK_NAME" \
     --restart unless-stopped \
     -p "$PORT:$PORT" \
     -v "$CONFIG_FILE:/home/picoclaw/.picoclaw/config.json" \

@@ -22,7 +22,56 @@ services:
       # - PICOCLAW_CHANNELS_TELEGRAM_TOKEN=your-token
       # - PICOCLAW_CHANNELS_DISCORD_ENABLED=true
       # - PICOCLAW_CHANNELS_DISCORD_TOKEN=your-token
+    depends_on:
+      - sage
+
+  sage:
+    image: ghcr.io/l33tdawg/sage:latest
+    container_name: sage
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - sage-data:/root/.sage
+      - ./sage-config.yaml:/root/.sage/config.yaml:ro
+    entrypoint: ["sage-gui", "serve"]
+    depends_on:
+      - ollama-proxy
+    environment:
+      - TZ=Asia/Ho_Chi_Minh
+  
+  bge-m3:
+    image: llama-cpp-server
+    build:
+      context: .
+      dockerfile: .devops/cpu.Dockerfile
+      target: server
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./models:/models
+    environment:
+      - LLAMA_ARG_MODEL=/models/bge-m3-Q4_k_m.gguf
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8081
+      - LLAMA_ARG_CTX_SIZE=8192
+      - LLAMA_ARG_EMBEDDINGS=1
+    restart: unless-stopped
+
+  ollama-proxy:
+    image: python:3.11-slim
+    depends_on:
+      - bge-m3
+    volumes:
+      - ./ollama-proxy.py:/app/ollama-proxy.py:ro
+    environment:
+      - UPSTREAM_URL=http://bge-m3:8081
+      - LISTEN_PORT=11434
+    command: ["python3", "-u", "/app/ollama-proxy.py"]
+    restart: unless-stopped
 
 volumes:
   picoclaw-workspace:
     name: picoclaw-workspace
+  sage-data:
+    name: sage-data

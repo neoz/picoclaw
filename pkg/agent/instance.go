@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/cost"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -33,6 +36,7 @@ type AgentInstance struct {
 	Tools          *tools.ToolRegistry
 	Subagents      *config.SubagentsConfig
 	SkillsFilter   []string
+	MCPManager     *mcp.Manager
 }
 
 // sharedTools holds tool instances that are shared across all agent instances.
@@ -190,6 +194,25 @@ func newAgentInstance(
 	registerIfAllowed(tools.NewSTMTool(sessionsManager))
 	registerIfAllowed(tools.NewSessionMessagesTool(sessionsManager))
 
+	// MCP tools
+	var mcpManager *mcp.Manager
+	if agentCfg.MCP != nil && len(agentCfg.MCP.Servers) > 0 {
+		mcpManager = mcp.NewManager(agentCfg.ID)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		mcpTools, err := mcpManager.Connect(ctx, agentCfg.MCP.Servers)
+		cancel()
+		if err != nil {
+			logger.WarnCF("mcp", "MCP connection issues",
+				map[string]interface{}{
+					"agent": agentCfg.ID,
+					"error": err.Error(),
+				})
+		}
+		for _, t := range mcpTools {
+			registerIfAllowed(t)
+		}
+	}
+
 	// Context builder
 	contextBuilder := NewContextBuilder(workspace)
 
@@ -225,6 +248,7 @@ func newAgentInstance(
 		Tools:          toolsRegistry,
 		Subagents:      agentCfg.Subagents,
 		SkillsFilter:   agentCfg.Skills,
+		MCPManager:     mcpManager,
 	}, nil
 }
 

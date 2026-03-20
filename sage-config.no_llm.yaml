@@ -1,0 +1,4 @@
+embedding:
+  provider: hash
+  dimension: 768
+rest_addr: ":8080"
