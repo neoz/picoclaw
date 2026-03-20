@@ -93,13 +93,6 @@ Present analysis as a structured profile:
 - {unique observation 2}
 ```
 
-### 4. Store Results (Optional)
-
-If the user wants to persist the analysis, store it using `memory_store`:
-- Key: `personality-profile:{username}`
-- Category: `custom` (90-day retention)
-- Content: the full profile output
-
 ## Guidelines
 
 - Never fabricate traits without message evidence. Cite specific message patterns.
