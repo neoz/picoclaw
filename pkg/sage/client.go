@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	lastTS     atomic.Int64 // monotonic timestamp to avoid replay detection
 }
 
 // NewClient creates a new Sage API client.
@@ -131,10 +133,11 @@ func (c *Client) ListMemories(agentID string, privKey ed25519.PrivateKey, domain
 	return &result, nil
 }
 
-// DeprecateMemory marks a memory as deprecated by its ID.
+// DeprecateMemory marks a memory as deprecated using the dashboard DELETE endpoint
+// which directly soft-deletes the memory (sets status="deprecated").
 func (c *Client) DeprecateMemory(agentID string, privKey ed25519.PrivateKey, memoryID string) error {
-	path := "/v1/memory/" + memoryID + "/deprecate"
-	resp, err := c.doSigned("POST", path, nil, agentID, privKey)
+	path := "/v1/dashboard/memory/" + memoryID
+	resp, err := c.doSigned("DELETE", path, nil, agentID, privKey)
 	if err != nil {
 		return fmt.Errorf("sage deprecate: %w", err)
 	}
@@ -203,7 +206,19 @@ func (c *Client) Health() error {
 // doSigned performs an HTTP request with Ed25519 signature authentication.
 // Signature covers: SHA256(method + " " + path + "\n" + body) || BigEndian(timestamp)
 func (c *Client) doSigned(method, path string, body []byte, agentID string, privKey ed25519.PrivateKey) (*http.Response, error) {
-	ts := time.Now().Unix()
+	// Use monotonically increasing timestamp to avoid Sage replay detection
+	// when multiple requests happen within the same second.
+	var ts int64
+	for {
+		last := c.lastTS.Load()
+		ts = time.Now().Unix()
+		if ts <= last {
+			ts = last + 1
+		}
+		if c.lastTS.CompareAndSwap(last, ts) {
+			break
+		}
+	}
 
 	// Build signing payload
 	message := method + " " + path + "\n"
