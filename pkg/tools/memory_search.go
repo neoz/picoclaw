@@ -47,6 +47,24 @@ func (t *MemorySearchTool) Parameters() map[string]interface{} {
 				"description": "Optional: filter by category (core, daily, conversation, custom)",
 				"enum":        []string{"core", "daily", "conversation", "custom"},
 			},
+			"domain": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: filter by domain topic (e.g. profile, project, rules, knowledge, daily)",
+			},
+			"min_confidence": map[string]interface{}{
+				"type":        "number",
+				"description": "Optional: minimum confidence threshold 0.0-1.0",
+			},
+			"time_range": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: filter by recency",
+				"enum":        []string{"today", "week", "month"},
+			},
+			"owner_scope": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: search scope - shared (group knowledge only), private (sender only), all (default)",
+				"enum":        []string{"shared", "private", "all"},
+			},
 			"limit": map[string]interface{}{
 				"type":        "number",
 				"description": "Maximum number of results to return (default 10)",
@@ -65,6 +83,14 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 	}
 
 	category, _ := args["category"].(string)
+	domain, _ := args["domain"].(string)
+	timeRange, _ := args["time_range"].(string)
+	ownerScope, _ := args["owner_scope"].(string)
+
+	var minConfidence float64
+	if mc, ok := args["min_confidence"].(float64); ok {
+		minConfidence = mc
+	}
 
 	t.mu.Lock()
 	owner := t.owner
@@ -100,13 +126,16 @@ func (t *MemorySearchTool) Execute(ctx context.Context, args map[string]interfac
 		return b.String(), nil
 	}
 
-	var results []memory.SearchResult
-	var err error
-	if category != "" {
-		results, err = t.db.SearchByCategory(query, category, limit, owner)
-	} else {
-		results, err = t.db.Search(query, limit, owner)
-	}
+	results, err := t.db.SearchWithOptions(memory.SearchOptions{
+		Query:         query,
+		Category:      category,
+		Domain:        domain,
+		MinConfidence: minConfidence,
+		TimeRange:     timeRange,
+		OwnerScope:    ownerScope,
+		Limit:         limit,
+		Owner:         owner,
+	})
 
 	if err != nil {
 		return fmt.Sprintf("Error searching memory: %v", err), nil

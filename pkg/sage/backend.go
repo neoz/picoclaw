@@ -210,21 +210,42 @@ func (sb *SageBackend) Store(key, content, category, owner string) error {
 }
 
 func (sb *SageBackend) Search(query string, limit int, owner string) ([]memory.SearchResult, error) {
-	return sb.searchWithFilter(query, "", limit, owner)
+	return sb.SearchWithOptions(memory.SearchOptions{
+		Query: query, Limit: limit, Owner: owner,
+	})
 }
 
 func (sb *SageBackend) SearchByCategory(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
-	return sb.searchWithFilter(query, category, limit, owner)
+	return sb.SearchWithOptions(memory.SearchOptions{
+		Query: query, Category: category, Limit: limit, Owner: owner,
+	})
 }
 
-func (sb *SageBackend) searchWithFilter(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
+func (sb *SageBackend) SearchWithOptions(opts memory.SearchOptions) ([]memory.SearchResult, error) {
+	query := opts.Query
+	category := opts.Category
+	limit := opts.Limit
+	owner := opts.Owner
+
+	// Resolve owner based on OwnerScope
+	switch opts.OwnerScope {
+	case "shared":
+		owner = "" // only query shared agent
+	case "private":
+		// keep owner as-is, but skip shared agent query in semanticSearch
+	}
+
+	return sb.searchWithFilter(opts, query, category, limit, owner)
+}
+
+func (sb *SageBackend) searchWithFilter(opts memory.SearchOptions, query, category string, limit int, owner string) ([]memory.SearchResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
 
 	// Try semantic search via Sage embed + query
 	if query != "" {
-		results, err := sb.semanticSearch(query, category, limit, owner)
+		results, err := sb.semanticSearch(opts, query, category, limit, owner)
 		if err == nil && len(results) > 0 {
 			return results, nil
 		}
@@ -235,11 +256,11 @@ func (sb *SageBackend) searchWithFilter(query, category string, limit int, owner
 		}
 	}
 
-	return sb.textSearch(query, category, limit, owner)
+	return sb.textSearch(opts, query, category, limit, owner)
 }
 
 // semanticSearch uses Sage's embed + query endpoints for server-side vector similarity.
-func (sb *SageBackend) semanticSearch(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
+func (sb *SageBackend) semanticSearch(opts memory.SearchOptions, query, category string, limit int, owner string) ([]memory.SearchResult, error) {
 	// Get credentials for the query agent
 	privKey, agentID, err := sb.identity.GetOrCreate(owner)
 	if err != nil {
@@ -252,30 +273,58 @@ func (sb *SageBackend) semanticSearch(query, category string, limit int, owner s
 		return nil, err
 	}
 
+	// Build query request with extended options
+	qr := QueryRequest{
+		Embedding:     embedding,
+		TopK:          limit * 2,
+		MinConfidence: opts.MinConfidence,
+	}
+	// Map domain topic to Sage domain_tag
+	if opts.Domain != "" {
+		if owner != "" {
+			qr.DomainTag = buildDomainTag(owner, opts.Domain)
+		} else {
+			qr.DomainTag = buildDomainTag("", opts.Domain)
+		}
+	}
+
 	// Query both shared and user agents' memories
 	var allResults []QueryResult
 
 	// Query as the current agent (sees own + accessible memories)
-	resp, err := sb.client.QueryMemories(agentID, privKey, QueryRequest{
-		Embedding: embedding,
-		TopK:      limit * 2,
-	})
+	resp, err := sb.client.QueryMemories(agentID, privKey, qr)
 	if err != nil {
 		return nil, err
 	}
 	allResults = append(allResults, resp.Results...)
 
-	// Also query as shared agent if owner is non-empty (shared memories may be under a different agent)
-	if owner != "" {
+	// Also query as shared agent if owner is non-empty and not private-only scope
+	if owner != "" && opts.OwnerScope != "private" {
 		sharedKey, sharedAgent, err := sb.identity.GetOrCreate("")
 		if err == nil && sharedAgent != agentID {
-			sharedResp, err := sb.client.QueryMemories(sharedAgent, sharedKey, QueryRequest{
-				Embedding: embedding,
-				TopK:      limit * 2,
-			})
+			sharedQR := qr
+			// Adjust domain_tag for shared agent
+			if opts.Domain != "" {
+				sharedQR.DomainTag = buildDomainTag("", opts.Domain)
+			}
+			sharedResp, err := sb.client.QueryMemories(sharedAgent, sharedKey, sharedQR)
 			if err == nil {
 				allResults = append(allResults, sharedResp.Results...)
 			}
+		}
+	}
+
+	// Compute time cutoff for time_range filter
+	var timeCutoff time.Time
+	if opts.TimeRange != "" {
+		now := time.Now().UTC()
+		switch opts.TimeRange {
+		case "today":
+			timeCutoff = now.Truncate(24 * time.Hour)
+		case "week":
+			timeCutoff = now.AddDate(0, 0, -7)
+		case "month":
+			timeCutoff = now.AddDate(0, -1, 0)
 		}
 	}
 
@@ -295,8 +344,28 @@ func (sb *SageBackend) semanticSearch(query, category string, limit int, owner s
 			}
 		}
 
-		key, content := parseKey(r.Content)
+		// Owner scope filter
 		entryOwner := ownerFromDomainTag(r.DomainTag)
+		switch opts.OwnerScope {
+		case "shared":
+			if entryOwner != "" {
+				continue
+			}
+		case "private":
+			if entryOwner == "" || entryOwner != opts.Owner {
+				continue
+			}
+		}
+
+		// Time range filter
+		if !timeCutoff.IsZero() {
+			updatedAt := parseTimeStr(r.UpdatedAt)
+			if updatedAt.Before(timeCutoff) {
+				continue
+			}
+		}
+
+		key, content := parseKey(r.Content)
 
 		entry := memory.MemoryEntry{
 			Key:        key,
@@ -321,7 +390,7 @@ func (sb *SageBackend) semanticSearch(query, category string, limit int, owner s
 }
 
 // textSearch is the fallback when semantic search is unavailable.
-func (sb *SageBackend) textSearch(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
+func (sb *SageBackend) textSearch(opts memory.SearchOptions, query, category string, limit int, owner string) ([]memory.SearchResult, error) {
 	items, err := sb.listAll(owner, limit*3)
 	if err != nil {
 		return nil, err
@@ -330,6 +399,20 @@ func (sb *SageBackend) textSearch(query, category string, limit int, owner strin
 	queryLower := strings.ToLower(query)
 	queryTerms := strings.Fields(queryLower)
 
+	// Compute time cutoff
+	var timeCutoff time.Time
+	if opts.TimeRange != "" {
+		now := time.Now().UTC()
+		switch opts.TimeRange {
+		case "today":
+			timeCutoff = now.Truncate(24 * time.Hour)
+		case "week":
+			timeCutoff = now.AddDate(0, 0, -7)
+		case "month":
+			timeCutoff = now.AddDate(0, -1, 0)
+		}
+	}
+
 	var results []memory.SearchResult
 	for _, item := range items {
 		key, content := parseKey(item.Content)
@@ -337,6 +420,40 @@ func (sb *SageBackend) textSearch(query, category string, limit int, owner strin
 		if category != "" {
 			itemCat := sageTypeToCategory(item.MemoryType)
 			if itemCat != category {
+				continue
+			}
+		}
+
+		// Owner scope filter
+		itemOwner := ownerFromDomainTag(item.DomainTag)
+		switch opts.OwnerScope {
+		case "shared":
+			if itemOwner != "" {
+				continue
+			}
+		case "private":
+			if itemOwner == "" || itemOwner != opts.Owner {
+				continue
+			}
+		}
+
+		// Domain filter
+		if opts.Domain != "" {
+			expectedTag := buildDomainTag(itemOwner, opts.Domain)
+			if item.DomainTag != expectedTag {
+				continue
+			}
+		}
+
+		// Min confidence filter
+		if opts.MinConfidence > 0 && item.Confidence < opts.MinConfidence {
+			continue
+		}
+
+		// Time range filter
+		if !timeCutoff.IsZero() {
+			updatedAt := parseTimeStr(item.UpdatedAt)
+			if updatedAt.Before(timeCutoff) {
 				continue
 			}
 		}
