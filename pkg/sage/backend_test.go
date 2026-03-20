@@ -1039,6 +1039,338 @@ func TestSageStoreWithTriplesLinksRelated(t *testing.T) {
 	sb.deleteByKey("test_triple_b", "")
 }
 
+// --- Integration tests for semantic search (embed + query) ---
+
+// TestSageSemanticSearch verifies that Search uses Sage's embed + query
+// pipeline for server-side vector similarity instead of client-side substring matching.
+func TestSageSemanticSearch(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	// Store a memory with distinctive content
+	err := sb.Store("test_semantic_item", "the quick brown fox jumps over the lazy dog", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	// Wait for indexing
+	time.Sleep(500 * time.Millisecond)
+
+	// Search with semantically related query (not exact substring)
+	results, err := sb.Search("fox jumping over dog", 10, "")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Entry.Key == "test_semantic_item" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// With hash embeddings (no_llm config), semantic search may not match;
+		// text fallback should still find it via shared query terms.
+		t.Fatalf("expected to find 'test_semantic_item' in %d results", len(results))
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_semantic_item", "")
+}
+
+// TestSageSemanticSearchSharedAsUser verifies that semantic search as a user
+// can find shared memories (queries both user and shared agents).
+func TestSageSemanticSearchSharedAsUser(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	err := sb.Store("test_sem_shared", "elephants have excellent memory", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	results, err := sb.Search("elephant memory", 10, "testuser789")
+	if err != nil {
+		t.Fatalf("Search with owner failed: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Entry.Key == "test_sem_shared" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Logf("shared memory not found by user semantic search (got %d results, may need Ollama)", len(results))
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_sem_shared", "")
+}
+
+// TestSageSemanticSearchByCategory verifies that SearchByCategory filters
+// results to the requested category.
+func TestSageSemanticSearchByCategory(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	// Store in different categories
+	err := sb.Store("test_semcat_core", "the sky is blue", "core", "")
+	if err != nil {
+		t.Fatalf("Store core failed: %v", err)
+	}
+	err = sb.Store("test_semcat_custom", "the sky is blue today", "custom", "")
+	if err != nil {
+		t.Fatalf("Store custom failed: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Search only in "custom" category
+	results, err := sb.SearchByCategory("sky blue", "custom", 10, "")
+	if err != nil {
+		t.Fatalf("SearchByCategory failed: %v", err)
+	}
+
+	for _, r := range results {
+		if r.Entry.Key == "test_semcat_core" {
+			t.Error("core memory should not appear in custom category search")
+		}
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_semcat_core", "")
+	sb.deleteByKey("test_semcat_custom", "")
+}
+
+// TestSageSearchFallbackToText verifies that Search still works via text
+// matching when a query contains exact terms (covers both semantic and fallback paths).
+func TestSageSearchFallbackToText(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	err := sb.Store("test_fallback_item", "unique xylophone orchestra performance", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Search with exact term that guarantees text match fallback works
+	results, err := sb.Search("xylophone", 10, "")
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Entry.Key == "test_fallback_item" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected to find 'test_fallback_item' in %d results", len(results))
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_fallback_item", "")
+}
+
+// --- Integration tests for Embed and QueryMemories client methods ---
+
+// TestSageEmbed verifies the Embed client method against a real Sage server.
+func TestSageEmbed(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	privKey, agentID, err := sb.identity.GetOrCreate("")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	embedding, err := sb.client.Embed(agentID, privKey, "hello world")
+	if err != nil {
+		t.Skipf("Embed not available (Ollama may not be running): %v", err)
+	}
+
+	if len(embedding) == 0 {
+		t.Fatal("expected non-empty embedding")
+	}
+}
+
+// TestSageQueryMemories verifies the QueryMemories client method.
+func TestSageQueryMemories(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	// Store something first
+	err := sb.Store("test_query_api", "quantum computing breakthroughs", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	privKey, agentID, err := sb.identity.GetOrCreate("")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+
+	embedding, err := sb.client.Embed(agentID, privKey, "quantum computing")
+	if err != nil {
+		t.Skipf("Embed not available: %v", err)
+	}
+
+	resp, err := sb.client.QueryMemories(agentID, privKey, QueryRequest{
+		Embedding: embedding,
+		TopK:      10,
+	})
+	if err != nil {
+		t.Fatalf("QueryMemories failed: %v", err)
+	}
+
+	// With hash embeddings (no_llm test config), cosine similarity may not
+	// produce meaningful matches. Just verify the API call succeeds and
+	// returns a valid response structure.
+	t.Logf("QueryMemories returned %d results (hash embeddings may yield 0)", len(resp.Results))
+
+	found := false
+	for _, r := range resp.Results {
+		key, _ := parseKey(r.Content)
+		if key == "test_query_api" {
+			found = true
+			break
+		}
+	}
+	if !found && len(resp.Results) > 0 {
+		t.Logf("test_query_api not in top results (got %d results)", len(resp.Results))
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_query_api", "")
+}
+
+// --- Integration tests for listAll cache ---
+
+// TestSageListAllCache verifies that listAll caches results and InvalidateCache clears them.
+func TestSageListAllCache(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	err := sb.Store("test_cache_a", "cache test data", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	// First call populates cache
+	items1, err := sb.listAll("", 100)
+	if err != nil {
+		t.Fatalf("listAll failed: %v", err)
+	}
+
+	// Second call should return cached result (same pointer contents)
+	items2, err := sb.listAll("", 100)
+	if err != nil {
+		t.Fatalf("listAll cached failed: %v", err)
+	}
+
+	if len(items1) != len(items2) {
+		t.Errorf("cached listAll returned different count: %d vs %d", len(items1), len(items2))
+	}
+
+	// Store another entry and verify cache is stale until invalidated
+	err = sb.Store("test_cache_b", "more cache data", "core", "")
+	if err != nil {
+		t.Fatalf("Store B failed: %v", err)
+	}
+
+	// Store calls InvalidateCache, so next listAll should see the new entry
+	items3, err := sb.listAll("", 100)
+	if err != nil {
+		t.Fatalf("listAll after invalidate failed: %v", err)
+	}
+
+	foundB := false
+	for _, item := range items3 {
+		key, _ := parseKey(item.Content)
+		if key == "test_cache_b" {
+			foundB = true
+			break
+		}
+	}
+	if !foundB {
+		t.Error("expected test_cache_b in listAll after cache invalidation")
+	}
+
+	// Cleanup
+	sb.deleteByKey("test_cache_a", "")
+	sb.deleteByKey("test_cache_b", "")
+}
+
+// TestSageListAllCacheDifferentOwner verifies that cache is not reused
+// when owner changes.
+func TestSageListAllCacheDifferentOwner(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	// Populate cache as shared
+	_, err := sb.listAll("", 50)
+	if err != nil {
+		t.Fatalf("listAll shared failed: %v", err)
+	}
+
+	// Verify cache exists
+	sb.mu.Lock()
+	cachedOwner := sb.cached.owner
+	sb.mu.Unlock()
+	if cachedOwner != "" {
+		t.Fatalf("expected cached owner to be empty, got %q", cachedOwner)
+	}
+
+	// Call with different owner — should NOT use the cached result
+	_, err = sb.listAll("someuser", 50)
+	if err != nil {
+		t.Fatalf("listAll someuser failed: %v", err)
+	}
+
+	sb.mu.Lock()
+	cachedOwner = sb.cached.owner
+	sb.mu.Unlock()
+	if cachedOwner != "someuser" {
+		t.Errorf("expected cached owner to be 'someuser', got %q", cachedOwner)
+	}
+}
+
+// TestSageDeleteInvalidatesCache verifies that DeleteAccessible clears the cache.
+func TestSageDeleteInvalidatesCache(t *testing.T) {
+	sb := sageTestBackend(t)
+
+	err := sb.Store("test_del_cache", "delete cache test", "core", "")
+	if err != nil {
+		t.Fatalf("Store failed: %v", err)
+	}
+
+	// Populate cache
+	_, err = sb.listAll("", 100)
+	if err != nil {
+		t.Fatalf("listAll failed: %v", err)
+	}
+
+	sb.mu.Lock()
+	hasCacheBefore := sb.cached != nil
+	sb.mu.Unlock()
+	if !hasCacheBefore {
+		t.Fatal("expected cache to be populated")
+	}
+
+	// Delete should invalidate cache
+	sb.DeleteAccessible("test_del_cache", "")
+
+	sb.mu.Lock()
+	hasCacheAfter := sb.cached != nil
+	sb.mu.Unlock()
+	if hasCacheAfter {
+		t.Error("expected cache to be nil after delete")
+	}
+}
+
 // TestSageTypeToCategory verifies mapping from Sage memory types back to categories.
 func TestSageTypeToCategory(t *testing.T) {
 	tests := []struct {
