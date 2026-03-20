@@ -19,12 +19,6 @@ Rules:
 - If found, use the memory-optimize skill to clean them up
 - Briefly report what was cleaned (e.g. "Merged 3 duplicate memories, removed 2 orphans")
 
-### Knowledge Graph Growth (every cycle)
-- Review the last few conversations using message_history
-- Use the auto-tagger skill to extract any untagged entities and relationships
-- Use the conversation-learner skill to capture new user preferences or patterns
-- Do this silently -- only report if something significant was learned
-
 ### Context Enrichment (before reporting)
 - Before sending any alert or report, use the context-weaver skill to pull related memories
 - This ensures your messages include relevant history and avoid redundancy
