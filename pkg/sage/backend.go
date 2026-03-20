@@ -2,6 +2,7 @@ package sage
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +22,27 @@ type pendingMemory struct {
 	topic    string // LLM-provided domain topic (e.g. "profile", "project")
 }
 
+// cachedRelation stores an entity-to-entity relation in the local graph cache.
+type cachedRelation struct {
+	Source    string
+	Relation string
+	Target   string
+	MemKey   string
+}
+
 // SageBackend implements memory.MemoryBackend using Sage as the remote store.
 type SageBackend struct {
 	client   *Client
 	identity *IdentityManager
 	mu       sync.Mutex
 	pending  map[string]*pendingMemory // key -> last submitted memory
+
+	// In-memory entity graph cache populated by AddRelation calls.
+	// Enables AllEntityNames and WalkGraphForOwner without a Sage graph query API.
+	entities  map[string]struct{}  // entity name set
+	relations []cachedRelation     // all cached relations
+	keyOwner  map[string]string    // memory key -> owner (for owner-scoped BFS)
+	keyIDs    map[string]string    // memory key -> Sage memory ID (for linking)
 }
 
 // NewSageBackend creates a new Sage-backed memory backend.
@@ -35,6 +51,9 @@ func NewSageBackend(client *Client, identity *IdentityManager) *SageBackend {
 		client:   client,
 		identity: identity,
 		pending:  make(map[string]*pendingMemory),
+		entities: make(map[string]struct{}),
+		keyOwner: make(map[string]string),
+		keyIDs:   make(map[string]string),
 	}
 }
 
@@ -162,6 +181,15 @@ func (sb *SageBackend) Store(key, content, category, owner string) error {
 			logger.WarnCF("sage", "Failed to set tags",
 				map[string]interface{}{"memory_id": resp.ID, "error": err.Error()})
 		}
+
+		// Track key->ID and key->owner for graph linking
+		sb.mu.Lock()
+		sb.keyIDs[key] = resp.ID
+		sb.keyOwner[key] = owner
+		sb.mu.Unlock()
+
+		// Link to other memories that share entity relations
+		sb.linkRelatedMemories(key, resp.ID, owner)
 	}
 
 	return nil
@@ -313,18 +341,186 @@ func (sb *SageBackend) Get(key string) *memory.MemoryEntry {
 	return nil
 }
 
-// AllEntityNames returns empty for Sage (no graph API).
+// AllEntityNames returns all entity names from the local graph cache.
 func (sb *SageBackend) AllEntityNames() ([]string, error) {
-	return nil, nil
+	sb.mu.Lock()
+	names := make([]string, 0, len(sb.entities))
+	for name := range sb.entities {
+		names = append(names, name)
+	}
+	sb.mu.Unlock()
+	sort.Strings(names)
+	return names, nil
 }
 
-// WalkGraphForOwner returns empty for Sage (no graph API).
-func (sb *SageBackend) WalkGraphForOwner(_ []string, _, _ int, _ string) ([]memory.GraphNode, error) {
-	return nil, nil
+// WalkGraphForOwner performs BFS over the local entity graph cache,
+// scoped to relations whose memory key is accessible by the given owner.
+func (sb *SageBackend) WalkGraphForOwner(entityNames []string, maxHops, maxNodes int, owner string) ([]memory.GraphNode, error) {
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+
+	if len(sb.entities) == 0 || len(sb.relations) == 0 {
+		return nil, nil
+	}
+
+	// Build accessible key set for owner filtering
+	accessible := make(map[string]bool)
+	for key, o := range sb.keyOwner {
+		if o == "" || o == owner {
+			accessible[key] = true
+		}
+	}
+
+	// Find seed entities
+	seedSet := make(map[string]bool, len(entityNames))
+	for _, name := range entityNames {
+		nameLower := strings.ToLower(name)
+		for ent := range sb.entities {
+			if strings.ToLower(ent) == nameLower {
+				seedSet[ent] = true
+			}
+		}
+	}
+	if len(seedSet) == 0 {
+		return nil, nil
+	}
+
+	// BFS
+	type queueItem struct {
+		name  string
+		depth int
+	}
+
+	visited := make(map[string]*memory.GraphNode)
+	var queue []queueItem
+	entityID := int64(1) // synthetic IDs for the memory.GraphNode struct
+
+	for name := range seedSet {
+		node := &memory.GraphNode{
+			Entity: memory.Entity{ID: entityID, Name: name, Type: "thing"},
+			Depth:  0,
+		}
+		visited[name] = node
+		queue = append(queue, queueItem{name, 0})
+		entityID++
+	}
+
+	for len(queue) > 0 && len(visited) < maxNodes {
+		cur := queue[0]
+		queue = queue[1:]
+
+		if cur.depth >= maxHops {
+			continue
+		}
+
+		// Find relations involving this entity
+		for _, rel := range sb.relations {
+			// Owner-scoped: skip relations for inaccessible keys
+			if rel.MemKey != "" && !accessible[rel.MemKey] {
+				continue
+			}
+
+			var neighbor string
+			if strings.EqualFold(rel.Source, cur.name) {
+				neighbor = rel.Target
+			} else if strings.EqualFold(rel.Target, cur.name) {
+				neighbor = rel.Source
+			} else {
+				continue
+			}
+
+			// Add relation to current node
+			curNode := visited[cur.name]
+			curNode.Relations = append(curNode.Relations, memory.Relation{
+				Relation:  rel.Relation,
+				MemoryKey: rel.MemKey,
+			})
+
+			if _, seen := visited[neighbor]; seen {
+				continue
+			}
+			if len(visited) >= maxNodes {
+				break
+			}
+
+			nextDepth := cur.depth + 1
+			node := &memory.GraphNode{
+				Entity: memory.Entity{ID: entityID, Name: neighbor, Type: "thing"},
+				Depth:  nextDepth,
+			}
+			visited[neighbor] = node
+			queue = append(queue, queueItem{neighbor, nextDepth})
+			entityID++
+		}
+	}
+
+	// Collect results sorted by depth then name
+	result := make([]memory.GraphNode, 0, len(visited))
+	for _, node := range visited {
+		result = append(result, *node)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Depth != result[j].Depth {
+			return result[i].Depth < result[j].Depth
+		}
+		return result[i].Entity.Name < result[j].Entity.Name
+	})
+	return result, nil
+}
+
+// linkRelatedMemories creates Sage links between the newly stored memory
+// and any previously stored memories that share entity relations.
+func (sb *SageBackend) linkRelatedMemories(key, memoryID, owner string) {
+	sb.mu.Lock()
+	// Collect memory keys that share entities with this key's relations
+	relatedKeys := make(map[string]struct{})
+	myEntities := make(map[string]struct{})
+	for _, rel := range sb.relations {
+		if rel.MemKey == key {
+			myEntities[rel.Source] = struct{}{}
+			myEntities[rel.Target] = struct{}{}
+		}
+	}
+	for _, rel := range sb.relations {
+		if rel.MemKey == key || rel.MemKey == "" {
+			continue
+		}
+		if _, ok := myEntities[rel.Source]; ok {
+			relatedKeys[rel.MemKey] = struct{}{}
+			continue
+		}
+		if _, ok := myEntities[rel.Target]; ok {
+			relatedKeys[rel.MemKey] = struct{}{}
+		}
+	}
+	// Resolve memory IDs for related keys
+	var links []string
+	for rk := range relatedKeys {
+		if id, ok := sb.keyIDs[rk]; ok {
+			links = append(links, id)
+		}
+	}
+	sb.mu.Unlock()
+
+	if len(links) == 0 {
+		return
+	}
+
+	privKey, agentID, err := sb.identity.GetOrCreate(owner)
+	if err != nil {
+		return
+	}
+	for _, targetID := range links {
+		if err := sb.client.LinkMemories(agentID, privKey, memoryID, targetID, "related"); err != nil {
+			logger.WarnCF("sage", "Failed to link memories",
+				map[string]interface{}{"source": memoryID, "target": targetID, "error": err.Error()})
+		}
+	}
 }
 
 // AddRelation buffers a knowledge triple. The triple will be included
 // in the next Store call for this memoryKey (single Sage submission).
+// Also caches the entity names and relation for local graph traversal.
 func (sb *SageBackend) AddRelation(source, relation, target, memoryKey string) error {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -339,16 +535,34 @@ func (sb *SageBackend) AddRelation(source, relation, target, memoryKey string) e
 		Predicate: relation,
 		Object:    target,
 	})
+
+	// Cache entities and relation for local graph traversal
+	sb.entities[source] = struct{}{}
+	sb.entities[target] = struct{}{}
+	sb.relations = append(sb.relations, cachedRelation{
+		Source:   source,
+		Relation: relation,
+		Target:   target,
+		MemKey:   memoryKey,
+	})
 	return nil
 }
 
 // RemoveRelationsByMemoryKey clears buffered triples for the given key,
-// preserving any buffered tags.
+// preserving any buffered tags. Also removes cached relations for this key.
 func (sb *SageBackend) RemoveRelationsByMemoryKey(key string) error {
 	sb.mu.Lock()
 	if pm, ok := sb.pending[key]; ok {
 		pm.triples = nil
 	}
+	// Remove cached relations for this key
+	filtered := sb.relations[:0]
+	for _, r := range sb.relations {
+		if r.MemKey != key {
+			filtered = append(filtered, r)
+		}
+	}
+	sb.relations = filtered
 	sb.mu.Unlock()
 	return nil
 }

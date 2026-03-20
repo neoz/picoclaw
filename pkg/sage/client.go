@@ -171,6 +171,32 @@ func (c *Client) SetTags(agentID string, privKey ed25519.PrivateKey, memoryID st
 	return nil
 }
 
+// LinkMemories creates a link between two memories in Sage.
+func (c *Client) LinkMemories(agentID string, privKey ed25519.PrivateKey, sourceID, targetID, linkType string) error {
+	if linkType == "" {
+		linkType = "related"
+	}
+	body, err := json.Marshal(struct {
+		SourceID string `json:"source_id"`
+		TargetID string `json:"target_id"`
+		LinkType string `json:"link_type"`
+	}{SourceID: sourceID, TargetID: targetID, LinkType: linkType})
+	if err != nil {
+		return fmt.Errorf("sage link: marshal: %w", err)
+	}
+
+	resp, err := c.doSigned("POST", "/v1/memory/link", body, agentID, privKey)
+	if err != nil {
+		return fmt.Errorf("sage link: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // Register registers an agent with its public key.
 func (c *Client) Register(agentID string, privKey ed25519.PrivateKey, req RegisterRequest) error {
 	body, err := json.Marshal(req)
