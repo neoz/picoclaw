@@ -7,20 +7,32 @@ description: Optimize all stored memories and knowledge graph by deduplicating, 
 
 Scan all stored memories and knowledge graph, then optimize for quality, relevance, and efficiency.
 
+This skill is tool-agnostic. Use whatever memory-related tools are available (search, store/save, delete/forget, list, etc.) to accomplish each step. Adapt parameter names and calling conventions to match the actual tools provided.
+
 ## Workflow
 
-### 1. Inventory
+### 1. Discover Tools
 
-Retrieve all memories by category using `memory_search` with empty query and `limit: 100`:
+Before starting, identify available memory-related tools. Look for tools that can:
 
-- `category: "core"`
-- `category: "daily"`
-- `category: "conversation"`
-- `category: "custom"`
+- **Search/List** memories (retrieve existing entries)
+- **Store/Save/Update** memories (create or modify entries)
+- **Delete/Forget/Remove** memories (remove entries)
+- **Graph operations** if available (entities, relations)
 
-Record total count, list of keys, confidence scores, and update dates per category.
+Note the actual tool names and their parameters. All subsequent steps should use these discovered tools.
 
-### 2. Identify Issues
+### 2. Inventory
+
+Retrieve all memories using the available search/list tools. If the tools support categories or filtering, query each category separately. Otherwise, retrieve all entries in batches.
+
+Record:
+- Total count of memories
+- List of keys/identifiers
+- Any metadata (categories, tags, timestamps, confidence scores, etc.)
+- Content summaries for dedup analysis
+
+### 3. Identify Issues
 
 Scan inventory for:
 
@@ -28,18 +40,18 @@ Scan inventory for:
 
 **Mergeable**: Separate entries about the same topic/entity (e.g. multiple fragments about one person, same project tracked across dates).
 
-**Miscategorized**:
-- Permanent facts in `daily`/`conversation` -> should be `core`
-- Ephemeral info in `core` -> should be `daily` or `conversation`
-- User preferences in `custom` -> should be `core`
+**Miscategorized** (if categories exist):
+- Permanent facts stored as ephemeral -> should be long-term/core
+- Ephemeral info stored as permanent -> should be short-term/daily
+- User preferences in wrong category
 
-**Low-value**: Outdated plans, trivial info, stale conversation context with no lasting value.
+**Low-value**: Outdated plans, trivial info, stale context with no lasting value.
 
 **Bloated**: Entries with excessive content that can be condensed without losing meaning.
 
-**Low-confidence**: Entries with confidence below 30% that haven't been accessed recently.
+**Low-confidence/Low-quality**: Entries with low confidence/relevance scores that haven't been accessed recently (if such metadata is available).
 
-### 3. Graph Audit
+### 4. Graph Audit (if graph tools available)
 
 Review knowledge graph for issues:
 
@@ -49,16 +61,16 @@ Review knowledge graph for issues:
 - **Missing relations**: Memories mentioning entity connections that lack graph edges
 - **Weak relations**: Relations that could be strengthened or consolidated
 
-Extract entity and relation info from memory content. For each memory mentioning entities, verify corresponding graph relations exist.
+If no graph tools are available, skip this step.
 
-### 4. Present Plan
+### 5. Present Plan
 
 Before making changes, present a summary:
 
 ```
 ## Memory Optimization Plan
 
-**Memories**: {N} total (core: {n}, daily: {n}, conversation: {n}, custom: {n})
+**Memories**: {N} total ({breakdown by category if applicable})
 
 ### Memory Actions
 - Merge: {N} groups ({key groups})
@@ -66,7 +78,7 @@ Before making changes, present a summary:
 - Condense: {N} entries ({keys})
 - Delete: {N} low-value entries ({keys})
 
-### Graph Actions
+### Graph Actions (if applicable)
 - Clean stale relations: {N} estimated
 - Remove orphaned entities: {N} estimated
 - Merge duplicate entities: {N} groups ({entity names})
@@ -77,24 +89,25 @@ Proceed? (y/n)
 
 Wait for user confirmation.
 
-### 5. Execute
+### 6. Execute
 
 Apply in this order:
 
-**5a. Graph cleanup first** (prevents conflicts with memory changes):
-1. For duplicate entities, pick canonical name and re-store affected memories with updated `relations` parameter
-2. Add missing relations by re-storing relevant memories with correct `relations` array
+**6a. Graph cleanup first** (if applicable, prevents conflicts with memory changes):
+1. For duplicate entities, pick canonical name and update affected memories
+2. Add missing relations by updating relevant memories
 
-**5b. Memory optimization**:
-1. **Merge**: Combine content into best key via `memory_store`. Preserve all `relations` from both entries. Delete redundant keys with `memory_forget`.
-2. **Re-categorize**: `memory_store` same key+content with correct category. Include existing `relations`.
-3. **Condense**: `memory_store` same key with tighter content. Keep all facts, remove filler/repetition. Preserve `relations`.
-4. **Delete**: `memory_forget` low-value entries (graph relations auto-cleaned).
+**6b. Memory optimization**:
+1. **Merge**: Combine content into best key. Preserve all metadata and relations from both entries. Delete redundant keys.
+2. **Re-categorize**: Update entries with correct category/tags.
+3. **Condense**: Update entries with tighter content. Keep all facts, remove filler/repetition. Preserve metadata.
+4. **Delete**: Remove low-value entries.
 
-**5c. Final graph sweep**:
-- Stale relations and orphaned entities are auto-cleaned by the system retention chain, but flag any remaining for awareness.
+**6c. Final sweep**:
+- Verify no broken references remain
+- Flag any remaining issues for awareness
 
-### 6. Report
+### 7. Report
 
 ```
 ## Optimization Complete
@@ -106,7 +119,7 @@ Apply in this order:
 - Deleted: {N}
 - Final count: {N} (was {old_N})
 
-### Knowledge Graph
+### Knowledge Graph (if applicable)
 - Stale relations cleaned: {N}
 - Orphaned entities removed: {N}
 - Duplicate entities merged: {N}
@@ -115,8 +128,8 @@ Apply in this order:
 
 ## Rules
 
-- Never delete or modify `core` entries without explicit user approval.
-- Preserve all knowledge graph relations when merging. Re-attach relations to the surviving key using the `relations` parameter in `memory_store`.
+- Never delete or modify long-term/core entries without explicit user approval.
+- Preserve all graph relations and metadata when merging entries.
 - When condensing, keep all facts and entities intact. Only remove filler and repetition.
 - When merging, prefer the more descriptive key name. Deduplicate content but keep all unique facts.
 - When merging duplicate entities, prefer the most complete/formal name as canonical.
