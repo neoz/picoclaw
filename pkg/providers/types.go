@@ -79,17 +79,15 @@ type Message struct {
 
 func (m Message) MarshalJSON() ([]byte, error) {
 	type Alias struct {
-		Role             string      `json:"role"`
-		Content          interface{} `json:"content"`
-		ReasoningContent string      `json:"reasoning_content,omitempty"`
-		ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
-		ToolCallID       string      `json:"tool_call_id,omitempty"`
+		Role       string      `json:"role"`
+		Content    interface{} `json:"content"`
+		ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+		ToolCallID string      `json:"tool_call_id,omitempty"`
 	}
 	a := Alias{
-		Role:             m.Role,
-		ReasoningContent: m.ReasoningContent,
-		ToolCalls:        m.ToolCalls,
-		ToolCallID:       m.ToolCallID,
+		Role:       m.Role,
+		ToolCalls:  m.ToolCalls,
+		ToolCallID: m.ToolCallID,
 	}
 	if len(m.ContentParts) > 0 {
 		a.Content = m.ContentParts
