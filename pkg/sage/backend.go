@@ -30,6 +30,15 @@ type cachedRelation struct {
 	MemKey   string
 }
 
+// listCache holds a cached listAll result with expiry.
+type listCache struct {
+	items   []MemoryItem
+	owner   string
+	fetched time.Time
+}
+
+const listCacheTTL = 30 * time.Second
+
 // SageBackend implements memory.MemoryBackend using Sage as the remote store.
 type SageBackend struct {
 	client   *Client
@@ -43,6 +52,9 @@ type SageBackend struct {
 	relations []cachedRelation     // all cached relations
 	keyOwner  map[string]string    // memory key -> owner (for owner-scoped BFS)
 	keyIDs    map[string]string    // memory key -> Sage memory ID (for linking)
+
+	// Short-lived cache for listAll to avoid redundant fetches within a context build.
+	cached *listCache
 }
 
 // NewSageBackend creates a new Sage-backed memory backend.
@@ -157,6 +169,8 @@ func (sb *SageBackend) Store(key, content, category, owner string) error {
 
 	domainTag := buildDomainTag(owner, topic)
 
+	sb.InvalidateCache()
+
 	resp, err := sb.client.Submit(agentID, privKey, SubmitRequest{
 		Content:    encodeKey(key, content),
 		MemoryType: mapping.memoryType,
@@ -208,7 +222,107 @@ func (sb *SageBackend) searchWithFilter(query, category string, limit int, owner
 		limit = 20
 	}
 
-	items, err := sb.listAll(owner, limit*3) // Fetch extra for client-side filtering
+	// Try semantic search via Sage embed + query
+	if query != "" {
+		results, err := sb.semanticSearch(query, category, limit, owner)
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+		// Fall through to text-match fallback on error (e.g. Ollama unavailable)
+		if err != nil {
+			logger.WarnCF("sage", "Semantic search unavailable, falling back to text match",
+				map[string]interface{}{"error": err.Error()})
+		}
+	}
+
+	return sb.textSearch(query, category, limit, owner)
+}
+
+// semanticSearch uses Sage's embed + query endpoints for server-side vector similarity.
+func (sb *SageBackend) semanticSearch(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
+	// Get credentials for the query agent
+	privKey, agentID, err := sb.identity.GetOrCreate(owner)
+	if err != nil {
+		return nil, fmt.Errorf("sage identity: %w", err)
+	}
+
+	// Generate embedding for the query text
+	embedding, err := sb.client.Embed(agentID, privKey, query)
+	if err != nil {
+		return nil, err
+	}
+
+	// Query both shared and user agents' memories
+	var allResults []QueryResult
+
+	// Query as the current agent (sees own + accessible memories)
+	resp, err := sb.client.QueryMemories(agentID, privKey, QueryRequest{
+		Embedding: embedding,
+		TopK:      limit * 2,
+	})
+	if err != nil {
+		return nil, err
+	}
+	allResults = append(allResults, resp.Results...)
+
+	// Also query as shared agent if owner is non-empty (shared memories may be under a different agent)
+	if owner != "" {
+		sharedKey, sharedAgent, err := sb.identity.GetOrCreate("")
+		if err == nil && sharedAgent != agentID {
+			sharedResp, err := sb.client.QueryMemories(sharedAgent, sharedKey, QueryRequest{
+				Embedding: embedding,
+				TopK:      limit * 2,
+			})
+			if err == nil {
+				allResults = append(allResults, sharedResp.Results...)
+			}
+		}
+	}
+
+	// Deduplicate and convert to SearchResult
+	seen := make(map[string]bool)
+	var results []memory.SearchResult
+	for i, r := range allResults {
+		if seen[r.MemoryID] || r.Status == "deprecated" {
+			continue
+		}
+		seen[r.MemoryID] = true
+
+		if category != "" {
+			itemCat := sageTypeToCategory(r.MemoryType)
+			if itemCat != category {
+				continue
+			}
+		}
+
+		key, content := parseKey(r.Content)
+		entryOwner := ownerFromDomainTag(r.DomainTag)
+
+		entry := memory.MemoryEntry{
+			Key:        key,
+			Content:    content,
+			Category:   sageTypeToCategory(r.MemoryType),
+			Owner:      entryOwner,
+			Confidence: r.ConfidenceScore,
+			CreatedAt:  parseTimeStr(r.CreatedAt),
+			UpdatedAt:  parseTimeStr(r.UpdatedAt),
+		}
+		results = append(results, memory.SearchResult{
+			Entry:             entry,
+			Rank:              float64(len(allResults) - i), // higher rank for earlier results
+			DecayedConfidence: r.ConfidenceScore,
+		})
+
+		if len(results) >= limit {
+			break
+		}
+	}
+	return results, nil
+}
+
+// textSearch is the fallback when semantic search is unavailable.
+func (sb *SageBackend) textSearch(query, category string, limit int, owner string) ([]memory.SearchResult, error) {
+	items, err := sb.listAll(owner, limit*3)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +341,6 @@ func (sb *SageBackend) searchWithFilter(query, category string, limit int, owner
 			}
 		}
 
-		// Client-side text matching
 		if query != "" {
 			textLower := strings.ToLower(key + " " + content)
 			matched := false
@@ -602,12 +715,46 @@ func (sb *SageBackend) Close() error {
 	return nil
 }
 
-// listAll fetches memories for the given owner.
+// listAll fetches memories for the given owner, with short-lived caching
+// to avoid redundant fetches when multiple callers (List, ListRecent, etc.)
+// run within the same context build cycle.
 // When owner is non-empty, queries both the user's agent and the shared agent
 // so that shared memories (stored with owner="") are always visible.
 // No domain_tag filtering is applied to avoid missing memories stored under
 // LLM-assigned or unexpected domain tags.
 func (sb *SageBackend) listAll(owner string, limit int) ([]MemoryItem, error) {
+	sb.mu.Lock()
+	if sb.cached != nil && sb.cached.owner == owner && time.Since(sb.cached.fetched) < listCacheTTL {
+		items := sb.cached.items
+		sb.mu.Unlock()
+		if limit > 0 && len(items) > limit {
+			return items[:limit], nil
+		}
+		return items, nil
+	}
+	sb.mu.Unlock()
+
+	items, err := sb.fetchAll(owner, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	sb.mu.Lock()
+	sb.cached = &listCache{items: items, owner: owner, fetched: time.Now()}
+	sb.mu.Unlock()
+
+	return items, nil
+}
+
+// InvalidateCache clears the listAll cache, e.g. after Store or Delete.
+func (sb *SageBackend) InvalidateCache() {
+	sb.mu.Lock()
+	sb.cached = nil
+	sb.mu.Unlock()
+}
+
+// fetchAll performs the actual API calls to retrieve memories.
+func (sb *SageBackend) fetchAll(owner string, limit int) ([]MemoryItem, error) {
 	// Always fetch from the shared agent (owner="")
 	sharedKey, sharedAgent, err := sb.identity.GetOrCreate("")
 	if err != nil {
@@ -673,6 +820,9 @@ func (sb *SageBackend) deleteByKey(key, owner string) bool {
 			}
 			deleted = true
 		}
+	}
+	if deleted {
+		sb.InvalidateCache()
 	}
 	return deleted
 }

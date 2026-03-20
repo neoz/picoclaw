@@ -216,6 +216,94 @@ func (c *Client) Register(agentID string, privKey ed25519.PrivateKey, req Regist
 	return nil
 }
 
+// EmbedRequest is the payload for POST /v1/embed.
+type EmbedRequest struct {
+	Text string `json:"text"`
+}
+
+// EmbedResponse is the response from POST /v1/embed.
+type EmbedResponse struct {
+	Embedding []float32 `json:"embedding"`
+	Model     string    `json:"model"`
+	Dimension int       `json:"dimension"`
+}
+
+// QueryRequest is the payload for POST /v1/memory/query.
+type QueryRequest struct {
+	Embedding     []float32 `json:"embedding"`
+	DomainTag     string    `json:"domain_tag,omitempty"`
+	MinConfidence float64   `json:"min_confidence,omitempty"`
+	StatusFilter  string    `json:"status_filter,omitempty"`
+	TopK          int       `json:"top_k,omitempty"`
+}
+
+// QueryResult is a single result from the query endpoint.
+type QueryResult struct {
+	MemoryID        string  `json:"memory_id"`
+	SubmittingAgent string  `json:"submitting_agent"`
+	Content         string  `json:"content"`
+	MemoryType      string  `json:"memory_type"`
+	DomainTag       string  `json:"domain_tag"`
+	ConfidenceScore float64 `json:"confidence_score"`
+	Status          string  `json:"status"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+}
+
+// QueryResponse is the response from POST /v1/memory/query.
+type QueryResponse struct {
+	Results    []QueryResult `json:"results"`
+	TotalCount int           `json:"total_count"`
+}
+
+// Embed generates a vector embedding for the given text via Sage's local Ollama.
+func (c *Client) Embed(agentID string, privKey ed25519.PrivateKey, text string) ([]float32, error) {
+	body, err := json.Marshal(EmbedRequest{Text: text})
+	if err != nil {
+		return nil, fmt.Errorf("sage embed: marshal: %w", err)
+	}
+
+	resp, err := c.doSigned("POST", "/v1/embed", body, agentID, privKey)
+	if err != nil {
+		return nil, fmt.Errorf("sage embed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result EmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("sage embed: decode: %w", err)
+	}
+	return result.Embedding, nil
+}
+
+// QueryMemories performs semantic similarity search over memories.
+func (c *Client) QueryMemories(agentID string, privKey ed25519.PrivateKey, req QueryRequest) (*QueryResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("sage query: marshal: %w", err)
+	}
+
+	resp, err := c.doSigned("POST", "/v1/memory/query", body, agentID, privKey)
+	if err != nil {
+		return nil, fmt.Errorf("sage query: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result QueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("sage query: decode: %w", err)
+	}
+	return &result, nil
+}
+
 // Health checks if the Sage server is reachable.
 func (c *Client) Health() error {
 	resp, err := c.httpClient.Get(c.baseURL + "/health")
