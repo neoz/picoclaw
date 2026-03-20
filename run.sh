@@ -63,8 +63,8 @@ stop_container() {
     local name="$1"
     if docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
         echo "Stopping $name..."
-        docker stop "$name" 2>/dev/null || true
-        docker rm -f "$name" 2>/dev/null || true
+        docker stop "$name" >/dev/null 2>&1 || true
+        docker rm -f "$name" >/dev/null 2>&1 || true
     fi
 }
 
