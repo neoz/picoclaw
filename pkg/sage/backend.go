@@ -63,30 +63,6 @@ func buildDomainTag(owner, topic string) string {
 	return "u_" + owner + "_" + topic
 }
 
-// domainTagsForRecall returns all domain tags to query for a given owner.
-// Includes all user-scoped domains + shared domains for comprehensive recall.
-func domainTagsForRecall(owner string) []string {
-	sharedDomains := []string{
-		"shared_knowledge",
-		"shared_rules",
-		"shared_project",
-		"shared_task",
-	}
-	if owner == "" {
-		return sharedDomains
-	}
-	userDomains := []string{
-		"u_" + owner + "_profile",
-		"u_" + owner + "_preference",
-		"u_" + owner + "_daily",
-		"u_" + owner + "_project",
-		"u_" + owner + "_conversation",
-		"u_" + owner + "_task",
-		"u_" + owner + "_learning",
-	}
-	return append(userDomains, sharedDomains...)
-}
-
 // sharedTopicDefaults maps category to topic for shared memories.
 var sharedTopicDefaults = map[string]string{
 	"core":         "knowledge",
@@ -322,7 +298,7 @@ func (sb *SageBackend) ListRecent(categories []string, days, limit int, owner st
 
 func (sb *SageBackend) Get(key string) *memory.MemoryEntry {
 	// Search across all domains since Get has no owner parameter
-	items, err := sb.listAllDomains(100)
+	items, err := sb.listAll("", 100)
 	if err != nil {
 		return nil
 	}
@@ -412,41 +388,53 @@ func (sb *SageBackend) Close() error {
 	return nil
 }
 
-// listAll fetches memories for the given owner (their domain + shared domain).
+// listAll fetches memories for the given owner.
+// When owner is non-empty, queries both the user's agent and the shared agent
+// so that shared memories (stored with owner="") are always visible.
+// No domain_tag filtering is applied to avoid missing memories stored under
+// LLM-assigned or unexpected domain tags.
 func (sb *SageBackend) listAll(owner string, limit int) ([]MemoryItem, error) {
-	privKey, agentID, err := sb.identity.GetOrCreate(owner)
+	// Always fetch from the shared agent (owner="")
+	sharedKey, sharedAgent, err := sb.identity.GetOrCreate("")
 	if err != nil {
-		return nil, fmt.Errorf("sage list: %w", err)
+		return nil, fmt.Errorf("sage list shared: %w", err)
 	}
 
-	tags := domainTagsForRecall(owner)
-	resp, err := sb.client.ListMemories(agentID, privKey, tags, limit)
+	resp, err := sb.client.ListMemories(sharedAgent, sharedKey, nil, limit)
 	if err != nil {
-		return nil, fmt.Errorf("sage list: %w", err)
+		return nil, fmt.Errorf("sage list shared: %w", err)
 	}
 
-	// Filter out deprecated memories
+	seen := make(map[string]struct{}, len(resp.Memories))
 	var active []MemoryItem
 	for _, m := range resp.Memories {
 		if m.Status != "deprecated" {
 			active = append(active, m)
+			seen[m.ID] = struct{}{}
 		}
 	}
+
+	// If owner is non-empty, also fetch from the user's own agent
+	if owner != "" {
+		userKey, userAgent, err := sb.identity.GetOrCreate(owner)
+		if err != nil {
+			return active, nil // return shared results on user-agent error
+		}
+		if userAgent != sharedAgent {
+			userResp, err := sb.client.ListMemories(userAgent, userKey, nil, limit)
+			if err == nil {
+				for _, m := range userResp.Memories {
+					if m.Status != "deprecated" {
+						if _, dup := seen[m.ID]; !dup {
+							active = append(active, m)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return active, nil
-}
-
-// listAllDomains fetches memories using the shared identity (for Get without owner).
-func (sb *SageBackend) listAllDomains(limit int) ([]MemoryItem, error) {
-	privKey, agentID, err := sb.identity.GetOrCreate("")
-	if err != nil {
-		return nil, fmt.Errorf("sage list all: %w", err)
-	}
-
-	resp, err := sb.client.ListMemories(agentID, privKey, nil, limit)
-	if err != nil {
-		return nil, fmt.Errorf("sage list all: %w", err)
-	}
-	return resp.Memories, nil
 }
 
 // deleteByKey finds and deprecates all memories with the given key.
