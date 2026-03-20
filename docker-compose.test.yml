@@ -1,0 +1,9 @@
+services:
+  sage-test:
+    image: ghcr.io/l33tdawg/sage:latest
+    container_name: sage-test
+    ports:
+      - "18099:8080"
+    volumes:
+      - ./sage-config.no_llm.yaml:/root/.sage/config.yaml:ro
+    entrypoint: ["sage-gui", "serve"]
