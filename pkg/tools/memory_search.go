@@ -31,7 +31,7 @@ func (t *MemorySearchTool) Name() string {
 }
 
 func (t *MemorySearchTool) Description() string {
-	return "Search across all memory entries. Memory content is stored in English, so always use English keywords in the query regardless of conversation language. Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
+	return "Search across all memory entries. Use this to recall past events, decisions, or information. Supports optional category filter. If query is empty, lists recent memory entries."
 }
 
 func (t *MemorySearchTool) Parameters() map[string]interface{} {

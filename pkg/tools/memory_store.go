@@ -29,7 +29,7 @@ func (t *MemoryStoreTool) Name() string {
 }
 
 func (t *MemoryStoreTool) Description() string {
-	return `Store a memory entry. Always write content in English, concise summary form regardless of conversation language.
+	return `Store a memory entry.
 Categories determine retention and purpose:
 - core (permanent): User identity, preferences, permanent knowledge (e.g. name, birthday, language preference)
 - daily (30d decay): Daily notes, what happened today, ephemeral observations
@@ -48,7 +48,7 @@ func (t *MemoryStoreTool) Parameters() map[string]interface{} {
 			},
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "The content to remember",
+				"description": "The content to remember.",
 			},
 			"category": map[string]interface{}{
 				"type":        "string",
