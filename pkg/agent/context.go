@@ -93,9 +93,10 @@ func (cb *ContextBuilder) buildInstructionsPrompt() string {
 		}
 	}
 
-	if cb.contextSections["safety"] {
-		parts = append(parts, cb.BuildSafety())
-	}
+	// Safety is always included — it is a guardrail, not an optional section.
+	// The context config can still list "safety" for backwards compatibility,
+	// but omitting it no longer skips the safety prompt.
+	parts = append(parts, cb.BuildSafety())
 
 	if cb.contextSections["skills"] {
 		if summary := cb.skillsLoader.BuildSkillsSummary(); summary != "" {
@@ -885,9 +886,8 @@ func (cb *ContextBuilder) GetContextStats(history []providers.Message, summary, 
 				stats.SystemParts = append(stats.SystemParts, makeStat("bootstrap", content))
 			}
 		}
-		if cb.contextSections["safety"] {
-			stats.SystemParts = append(stats.SystemParts, makeStat("safety", cb.BuildSafety()))
-		}
+		// Safety is always included
+		stats.SystemParts = append(stats.SystemParts, makeStat("safety", cb.BuildSafety()))
 		if cb.contextSections["skills"] {
 			if s := cb.skillsLoader.BuildSkillsSummary(); s != "" {
 				stats.SystemParts = append(stats.SystemParts, makeStat("skills", s))

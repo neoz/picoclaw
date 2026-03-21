@@ -36,12 +36,13 @@ func TestBuildSystemPrompt_InstructionsOnly(t *testing.T) {
 	if !strings.Contains(prompt, "You are a poet.") {
 		t.Error("prompt missing instructions text")
 	}
-	// Should NOT contain identity or safety sections
+	// Should NOT contain identity section (not opted in)
 	if strings.Contains(prompt, "# picoclaw") {
 		t.Error("lightweight prompt should not contain identity section")
 	}
-	if strings.Contains(prompt, "## Safety") {
-		t.Error("lightweight prompt should not contain safety section")
+	// Safety is always included regardless of context sections
+	if !strings.Contains(prompt, "## Safety") {
+		t.Error("lightweight prompt should always contain safety section")
 	}
 }
 
@@ -72,8 +73,9 @@ func TestBuildSystemPrompt_InstructionsWithIdentity(t *testing.T) {
 	if !strings.Contains(prompt, "# picoclaw") {
 		t.Error("prompt should include identity section")
 	}
-	if strings.Contains(prompt, "## Safety") {
-		t.Error("prompt should not include safety section")
+	// Safety is always included regardless of context sections
+	if !strings.Contains(prompt, "## Safety") {
+		t.Error("prompt should always include safety section")
 	}
 }
 
