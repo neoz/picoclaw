@@ -50,6 +50,9 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 		"model":    model,
 		"messages": messages,
 		"stream":   true,
+		"stream_options": map[string]interface{}{
+			"include_usage": true,
+		},
 	}
 
 	if len(tools) > 0 {
