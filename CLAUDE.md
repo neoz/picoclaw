@@ -20,6 +20,8 @@ make run ARGS="agent"   # Build and run with arguments
 
 Run tests per package: `go test ./pkg/agent/`, `go test ./pkg/tools/`, `go test ./pkg/memory/`, `go test ./pkg/security/`, `go test ./pkg/channels/`, `go test ./pkg/session/`, `go test ./pkg/config/`, `go test ./pkg/providers/`, `go test ./pkg/secrets/`, `go test ./pkg/cost/`.
 
+Sage integration tests: `docker compose -f docker-compose.test.yml up -d sage-test && SAGE_TEST_URL=http://localhost:18099 go test ./pkg/sage/ -v -count=1`. Uses `sage-config.no_llm.yaml` (hash embeddings, no LLM needed).
+
 ## Architecture
 
 Entry point: `cmd/picoclaw/main.go` (CLI commands: `onboard`, `agent`, `gateway`, `status`, `cron`, `skills`, `version`).
@@ -45,6 +47,13 @@ Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FT
 - **Retention cleanup chain**: delete expired memories -> `CleanStaleRelations()` -> `CleanOrphanedEntities()`. All three steps required in order.
 - **Web search priority**: Ollama > Brave > DuckDuckGo (free fallback). All implement `web_search` tool name.
 - **Bootstrap files**: `context.go` loads AGENTS.md, SOUL.md, USER.md, IDENTITY.md from workspace (not TOOLS.md).
+- **Sage API endpoints**: Deprecate uses `DELETE /v1/dashboard/memory/{id}` (sync soft-delete). Challenge endpoint (`POST /v1/memory/{id}/challenge`) is async on-chain consensus. There is no `/v1/memory/{id}/deprecate`.
+- **Sage replay detection**: Sage rejects duplicate request signatures within the same second. Client uses monotonic `lastTS` counter in `doSigned()` to ensure unique timestamps on rapid successive calls.
+- **Sage domain tags**: `listAll()` queries with `nil` domain tags (no filtering) to avoid missing memories stored under LLM-assigned custom topics. Never use hardcoded domain tag lists for recall.
+- **Sage agent scoping**: Memories are scoped by agent identity. Shared memories (owner="") use `_shared.key`. `listAll()` always queries the shared agent first, then the user's agent if owner is non-empty.
+- **Sage graph cache**: Sage has no public API to query triples or linked memories back. `SageBackend` maintains an in-memory entity graph cache (populated by `AddRelation`) for `AllEntityNames()`/`WalkGraphForOwner()`. Cache is ephemeral — rebuilds as LLM processes messages.
+- **Sage LinkMemories**: `POST /v1/memory/link` with `{source_id, target_id, link_type}`. Called automatically by `Store()` when new memory shares entities with previously stored memories. `GetLinkedMemories` is Sage-internal only (no REST endpoint).
+- **Sage source**: Server source at `D:\working\go\sage` for API investigation.
 
 ## How-To Recipes
 
