@@ -556,32 +556,31 @@ func gatewayCmd() {
 		})
 
 	// Setup cron tool and service
-	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath())
+	reportChannel := cfg.Report.Channel
+	reportChatID := cfg.Report.ChatID
+	cronService := setupCronTool(agentLoop, msgBus, cfg.WorkspacePath(), reportChannel, reportChatID)
 
 	heartbeatService := heartbeat.NewHeartbeatService(
 		cfg.WorkspacePath(),
 		cfg.Heartbeat.IntervalSeconds,
 		cfg.Heartbeat.Enabled,
 	)
-	// Resolve heartbeat delivery target from channel's allow_from
+	// Resolve heartbeat delivery target from report config
 	if cfg.Heartbeat.Enabled {
-		heartbeatChannel := cfg.Heartbeat.Channel
-		allowFrom := cfg.GetChannelAllowFrom(heartbeatChannel)
-		if heartbeatChannel == "" || len(allowFrom) == 0 {
-			fmt.Printf("Warning: heartbeat enabled but channel '%s' has no allow_from configured, disabling heartbeat\n", heartbeatChannel)
+		if reportChannel == "" || reportChatID == "" {
+			fmt.Printf("Warning: heartbeat enabled but report channel/chat_id not configured, disabling heartbeat\n")
 			heartbeatService = heartbeat.NewHeartbeatService(cfg.WorkspacePath(), cfg.Heartbeat.IntervalSeconds, false)
 		} else {
-			heartbeatChatID := allowFrom[0]
 			heartbeatService.SetOnHeartbeat(func(prompt string) (string, error) {
 				return agentLoop.ProcessDirectWithChannel(
 					context.Background(),
 					prompt,
 					"heartbeat:system",
-					heartbeatChannel,
-					heartbeatChatID,
+					reportChannel,
+					reportChatID,
 				)
 			})
-			heartbeatService.SetDelivery(msgBus, heartbeatChannel, heartbeatChatID)
+			heartbeatService.SetDelivery(msgBus, reportChannel, reportChatID)
 		}
 	}
 
@@ -743,14 +742,14 @@ func getConfigPath() string {
 	return filepath.Join(home, ".picoclaw", "config.json")
 }
 
-func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string) *cron.CronService {
+func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace string, reportChannel, reportChatID string) *cron.CronService {
 	cronStorePath := filepath.Join(workspace, "cron", "jobs.json")
 
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
 	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus)
+	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, reportChannel, reportChatID)
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler
