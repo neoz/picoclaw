@@ -220,7 +220,7 @@ func buildSharedTools(cfg *config.Config, msgBus *bus.MessageBus, memBackend mem
 	// For now, spawn needs a provider. We create one from defaults.
 	defaultProvider, provErr := providers.CreateProvider(cfg)
 	if provErr == nil {
-		subagentManager := tools.NewSubagentManager(defaultProvider, workspace, msgBus)
+		subagentManager := tools.NewSubagentManager(defaultProvider, workspace, msgBus, cfg.Agents.Defaults.MaxTokens)
 		shared.spawnTool = tools.NewSpawnTool(subagentManager)
 	}
 
@@ -682,7 +682,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 				"model":             inst.Model,
 				"messages_count":    len(messages),
 				"tools_count":       len(providerToolDefs),
-				"max_tokens":        8192,
+				"max_tokens":        inst.MaxTokens,
 				"temperature":       inst.Temperature,
 				"system_prompt_len": len(messages[0].Content),
 			})
@@ -712,7 +712,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, inst *AgentInstance, m
 
 		// Call LLM
 		response, err := inst.Provider.Chat(ctx, messages, providerToolDefs, inst.Model, map[string]interface{}{
-			"max_tokens":  8192,
+			"max_tokens":  inst.MaxTokens,
 			"temperature": inst.Temperature,
 		})
 
