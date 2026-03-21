@@ -834,7 +834,55 @@ func splitMessage(text string, maxLen int) []string {
 		parts = append(parts, text[:cut])
 		text = text[cut:]
 	}
+	// Repair unclosed HTML tags in each chunk so Telegram can parse them
+	for i := range parts {
+		parts[i] = repairHTMLTags(parts[i])
+	}
 	return parts
+}
+
+// repairHTMLTags closes unclosed tags at the end of a chunk so each chunk
+// is valid Telegram HTML after splitting.
+func repairHTMLTags(html string) string {
+	reOpen := regexp.MustCompile(`<(b|i|s|u|code|pre|a)\b[^>]*>`)
+	reClose := regexp.MustCompile(`</(b|i|s|u|code|pre|a)>`)
+
+	var stack []string
+	scanner := html
+	for len(scanner) > 0 {
+		oLoc := reOpen.FindStringIndex(scanner)
+		cLoc := reClose.FindStringIndex(scanner)
+
+		if oLoc == nil && cLoc == nil {
+			break
+		}
+
+		useOpen := oLoc != nil && (cLoc == nil || oLoc[0] <= cLoc[0])
+		if useOpen {
+			m := reOpen.FindStringSubmatch(scanner[oLoc[0]:oLoc[1]])
+			if len(m) >= 2 {
+				stack = append(stack, m[1])
+			}
+			scanner = scanner[oLoc[1]:]
+		} else {
+			m := reClose.FindStringSubmatch(scanner[cLoc[0]:cLoc[1]])
+			if len(m) >= 2 {
+				for j := len(stack) - 1; j >= 0; j-- {
+					if stack[j] == m[1] {
+						stack = append(stack[:j], stack[j+1:]...)
+						break
+					}
+				}
+			}
+			scanner = scanner[cLoc[1]:]
+		}
+	}
+
+	// Close unclosed tags in reverse (innermost first)
+	for i := len(stack) - 1; i >= 0; i-- {
+		html += "</" + stack[i] + ">"
+	}
+	return html
 }
 
 func markdownToTelegramHTML(text string) string {

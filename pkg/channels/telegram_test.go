@@ -337,6 +337,64 @@ func TestSplitMessage_PreservesAllContent(t *testing.T) {
 	}
 }
 
+// --- repairHTMLTags ---
+
+func TestRepairHTMLTags_NoTags(t *testing.T) {
+	if got := repairHTMLTags("hello world"); got != "hello world" {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestRepairHTMLTags_BalancedTags(t *testing.T) {
+	input := "<b>bold</b> and <code>code</code>"
+	if got := repairHTMLTags(input); got != input {
+		t.Errorf("expected unchanged, got %q", got)
+	}
+}
+
+func TestRepairHTMLTags_UnclosedCode(t *testing.T) {
+	input := "text <code>unclosed"
+	got := repairHTMLTags(input)
+	if !strings.HasSuffix(got, "</code>") {
+		t.Errorf("expected </code> appended, got %q", got)
+	}
+}
+
+func TestRepairHTMLTags_UnclosedNested(t *testing.T) {
+	input := "<pre><code>block content"
+	got := repairHTMLTags(input)
+	if !strings.HasSuffix(got, "</code></pre>") {
+		t.Errorf("expected </code></pre> appended, got %q", got)
+	}
+}
+
+func TestRepairHTMLTags_UnclosedBoldAndCode(t *testing.T) {
+	input := "<b>bold <code>mixed"
+	got := repairHTMLTags(input)
+	if !strings.HasSuffix(got, "</code></b>") {
+		t.Errorf("expected </code></b> appended, got %q", got)
+	}
+}
+
+func TestSplitMessage_RepairsHTMLTags(t *testing.T) {
+	// Simulate a message where a <code> tag spans the split boundary
+	chunk1 := "<pre><code>" + strings.Repeat("x", 100) // opens pre+code
+	chunk2 := strings.Repeat("y", 50) + "</code></pre>" // closes them
+	full := chunk1 + "\n\n" + chunk2
+	limit := len(chunk1) + 10 // force split between chunks
+
+	parts := splitMessage(full, limit)
+	if len(parts) < 2 {
+		t.Fatalf("expected at least 2 parts, got %d", len(parts))
+	}
+
+	// First chunk must have closing tags appended
+	if !strings.HasSuffix(parts[0], "</code></pre>") {
+		t.Errorf("first chunk should have closing tags, got suffix: %q",
+			parts[0][max(0, len(parts[0])-30):])
+	}
+}
+
 // --- parseChatID ---
 
 func TestParseChatID(t *testing.T) {
