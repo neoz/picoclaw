@@ -108,6 +108,11 @@ func (cb *ContextBuilder) buildInstructionsPrompt() string {
 		parts = append(parts, cb.buildDelegationPrompt())
 	}
 
+	// Memory reminder for instructions-mode agents that opted into memory
+	if cb.contextSections["memory"] && cb.memoryDB != nil {
+		parts = append(parts, cb.buildMemoryReminder())
+	}
+
 	return strings.Join(parts, "\n\n---\n\n")
 }
 
@@ -167,6 +172,20 @@ func (cb *ContextBuilder) BuildSafety() string {
 	return sb.String()
 }
 
+// buildMemoryReminder returns a behavioral prompt that instructs the LLM
+// to proactively use memory tools instead of relying on auto-injected context.
+func (cb *ContextBuilder) buildMemoryReminder() string {
+	var sb strings.Builder
+	sb.WriteString("## Memory\n\n")
+	sb.WriteString("You have access to a persistent memory system via tools.\n")
+	sb.WriteString("- Before answering questions about prior conversations, decisions, or user preferences, always run `memory_search` first.\n")
+	sb.WriteString("- When you learn important facts about the user or project, store them with `memory_store`.\n")
+	sb.WriteString("- Use `memory_forget` to remove outdated or incorrect entries.\n")
+	sb.WriteString("- When the question involves people, teams, projects, or connections, use `memory_search` with relevant entity names — it finds relationship paths across the knowledge graph.\n")
+	sb.WriteString("- Do not assume you remember something — verify with `memory_search` if unsure.\n")
+	return sb.String()
+}
+
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	if cb.instructions != "" {
 		return cb.buildInstructionsPrompt()
@@ -204,7 +223,10 @@ The following skills extend your capabilities. To use a skill, read its SKILL.md
 		parts = append(parts, cb.buildDelegationPrompt())
 	}
 
-	// Memory context is now injected per-message via buildRelevantMemoryContext()
+	// Memory behavioral reminder — LLM uses tools to recall, no auto-injection
+	if cb.memoryDB != nil {
+		parts = append(parts, cb.buildMemoryReminder())
+	}
 
 	// Join with "---" separator
 	return strings.Join(parts, "\n\n---\n\n")
@@ -566,12 +588,6 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 	// Dynamic context (separate system message so the static prompt stays cacheable)
 	var dynamicParts []string
 
-	if cb.instructions == "" || cb.contextSections["memory"] {
-		if memoryContext := cb.buildRelevantMemoryContext(currentMessage, owner, chatID); memoryContext != "" {
-			dynamicParts = append(dynamicParts, memoryContext)
-		}
-	}
-
 	if channel != "" && chatID != "" {
 		chatType := "direct message"
 		if isGroup {
@@ -894,13 +910,11 @@ func (cb *ContextBuilder) GetContextStats(history []providers.Message, summary, 
 		stats.SystemParts = append(stats.SystemParts, makeStat("delegation", cb.buildDelegationPrompt()))
 	}
 
-	// --- Dynamic parts ---
-	if cb.instructions == "" || cb.contextSections["memory"] {
-		if memCtx := cb.buildRelevantMemoryContext(currentMessage, owner, chatID); memCtx != "" {
-			stats.DynamicParts = append(stats.DynamicParts, makeStat("memory", memCtx))
-		}
+	if cb.memoryDB != nil {
+		stats.SystemParts = append(stats.SystemParts, makeStat("memory_reminder", cb.buildMemoryReminder()))
 	}
 
+	// --- Dynamic parts ---
 	if channel != "" && chatID != "" {
 		chatType := "direct message"
 		if isGroup {
