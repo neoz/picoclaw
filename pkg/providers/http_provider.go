@@ -49,7 +49,7 @@ func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []Too
 	requestBody := map[string]interface{}{
 		"model":    model,
 		"messages": messages,
-		"stream":   false,
+		"stream":   true,
 	}
 
 	if len(tools) > 0 {
@@ -197,11 +197,7 @@ func (p *HTTPProvider) parseResponse(body []byte) (*LLMResponse, error) {
 				Usage:        usage,
 			}, nil
 		}
-		return &LLMResponse{
-			Content:      "",
-			FinishReason: "stop",
-			Usage:        apiResponse.Usage,
-		}, nil
+		return nil, fmt.Errorf("empty response from provider (no choices and no content): %s", string(parseBody))
 	}
 
 	choice := apiResponse.Choices[0]
@@ -283,18 +279,162 @@ func stripThinkTags(s string) string {
 	return strings.TrimSpace(out)
 }
 
-// extractSSEJSON extracts the first JSON object from an SSE "data: {...}" response.
+// extractSSEJSON merges all SSE "data: {...}" chunks into a single non-streaming
+// response JSON. Streaming responses use choices[].delta instead of choices[].message,
+// and content/tool_calls are spread across multiple chunks that must be aggregated.
 func extractSSEJSON(body []byte) []byte {
+	var contentBuilder strings.Builder
+	var reasoningBuilder strings.Builder
+	var finishReason string
+	var usage json.RawMessage
+
+	// toolCallAccum accumulates streamed tool call deltas by index.
+	type toolCallAccum struct {
+		ID       string
+		Type     string
+		Name     string
+		ArgsJSON strings.Builder
+	}
+	toolCalls := make(map[int]*toolCallAccum)
+
 	for _, line := range bytes.Split(body, []byte("\n")) {
 		line = bytes.TrimSpace(line)
-		if bytes.HasPrefix(line, []byte("data: ")) {
-			payload := bytes.TrimPrefix(line, []byte("data: "))
-			if len(payload) > 0 && payload[0] == '{' {
-				return payload
+		if !bytes.HasPrefix(line, []byte("data: ")) {
+			continue
+		}
+		payload := bytes.TrimPrefix(line, []byte("data: "))
+		if len(payload) == 0 || payload[0] != '{' {
+			continue // skip "data: [DONE]" and non-JSON lines
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+					ToolCalls        []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function *struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+				// Non-streaming format fallback
+				Message json.RawMessage `json:"message"`
+				FinishReason string     `json:"finish_reason"`
+			} `json:"choices"`
+			Usage json.RawMessage `json:"usage"`
+		}
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			continue
+		}
+
+		// If a chunk has "message" instead of "delta", it's not actually streamed —
+		// return the raw payload as-is (single non-streaming response in SSE envelope).
+		if len(chunk.Choices) > 0 && len(chunk.Choices[0].Message) > 0 {
+			return payload
+		}
+
+		if len(chunk.Choices) > 0 {
+			delta := chunk.Choices[0].Delta
+			contentBuilder.WriteString(delta.Content)
+			reasoningBuilder.WriteString(delta.ReasoningContent)
+
+			for _, tc := range delta.ToolCalls {
+				acc, ok := toolCalls[tc.Index]
+				if !ok {
+					acc = &toolCallAccum{}
+					toolCalls[tc.Index] = acc
+				}
+				if tc.ID != "" {
+					acc.ID = tc.ID
+				}
+				if tc.Type != "" {
+					acc.Type = tc.Type
+				}
+				if tc.Function != nil {
+					if tc.Function.Name != "" {
+						acc.Name = tc.Function.Name
+					}
+					acc.ArgsJSON.WriteString(tc.Function.Arguments)
+				}
+			}
+
+			if chunk.Choices[0].FinishReason != "" {
+				finishReason = chunk.Choices[0].FinishReason
 			}
 		}
+
+		if len(chunk.Usage) > 0 && string(chunk.Usage) != "null" {
+			usage = chunk.Usage
+		}
 	}
-	return nil
+
+	// If we got nothing from the stream, return nil to let caller handle raw body.
+	if contentBuilder.Len() == 0 && reasoningBuilder.Len() == 0 && len(toolCalls) == 0 && finishReason == "" {
+		return nil
+	}
+
+	// Build aggregated tool_calls array sorted by index.
+	var tcJSON []interface{}
+	if len(toolCalls) > 0 {
+		// Find max index
+		maxIdx := 0
+		for idx := range toolCalls {
+			if idx > maxIdx {
+				maxIdx = idx
+			}
+		}
+		for i := 0; i <= maxIdx; i++ {
+			acc, ok := toolCalls[i]
+			if !ok {
+				continue
+			}
+			tcJSON = append(tcJSON, map[string]interface{}{
+				"id":   acc.ID,
+				"type": acc.Type,
+				"function": map[string]interface{}{
+					"name":      acc.Name,
+					"arguments": acc.ArgsJSON.String(),
+				},
+			})
+		}
+	}
+
+	// Reconstruct a non-streaming response structure.
+	message := map[string]interface{}{
+		"content": contentBuilder.String(),
+	}
+	if reasoningBuilder.Len() > 0 {
+		message["reasoning_content"] = reasoningBuilder.String()
+	}
+	if len(tcJSON) > 0 {
+		message["tool_calls"] = tcJSON
+	}
+
+	result := map[string]interface{}{
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message":       message,
+				"finish_reason": finishReason,
+			},
+		},
+	}
+	if len(usage) > 0 {
+		var u interface{}
+		if json.Unmarshal(usage, &u) == nil {
+			result["usage"] = u
+		}
+	}
+
+	out, err := json.Marshal(result)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {

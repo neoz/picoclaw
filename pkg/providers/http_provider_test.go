@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -488,6 +489,190 @@ func TestParseResponse_AnthropicFormat_CacheReadOnly(t *testing.T) {
 	}
 	if resp.Usage.GetCachedTokens() != 2048 {
 		t.Errorf("cached = %d, want 2048", resp.Usage.GetCachedTokens())
+	}
+}
+
+func TestExtractSSEJSON_StreamedTextContent(t *testing.T) {
+	// Simulates a typical streaming response with content split across chunks.
+	body := []byte(`data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":" world"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+
+data: [DONE]
+`)
+
+	result := extractSSEJSON(body)
+	if result == nil {
+		t.Fatal("extractSSEJSON returned nil")
+	}
+
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content   string          `json:"content"`
+				ToolCalls json.RawMessage `json:"tool_calls"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage *UsageInfo `json:"usage"`
+	}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Choices) != 1 {
+		t.Fatalf("choices: got %d, want 1", len(parsed.Choices))
+	}
+	if parsed.Choices[0].Message.Content != "Hello world" {
+		t.Errorf("content: got %q, want %q", parsed.Choices[0].Message.Content, "Hello world")
+	}
+	if parsed.Choices[0].FinishReason != "stop" {
+		t.Errorf("finish_reason: got %q, want %q", parsed.Choices[0].FinishReason, "stop")
+	}
+	if parsed.Usage == nil {
+		t.Fatal("usage is nil")
+	}
+	if parsed.Usage.TotalTokens != 12 {
+		t.Errorf("total_tokens: got %d, want 12", parsed.Usage.TotalTokens)
+	}
+}
+
+func TestExtractSSEJSON_StreamedToolCall(t *testing.T) {
+	// Simulates a streaming response where the LLM calls a tool.
+	// Tool call metadata arrives in one chunk, arguments are split across multiple chunks.
+	body := []byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"web_search","arguments":""}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"qu"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ery\": \"weather HCM"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+`)
+
+	result := extractSSEJSON(body)
+	if result == nil {
+		t.Fatal("extractSSEJSON returned nil")
+	}
+
+	// Parse the aggregated result through parseResponse to verify end-to-end.
+	p := &HTTPProvider{}
+	resp, err := p.parseResponse(result)
+	if err != nil {
+		t.Fatalf("parseResponse: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool_calls: got %d, want 1", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_abc123" {
+		t.Errorf("tool call ID: got %q, want %q", tc.ID, "call_abc123")
+	}
+	if tc.Name != "web_search" {
+		t.Errorf("tool call name: got %q, want %q", tc.Name, "web_search")
+	}
+	query, ok := tc.Arguments["query"].(string)
+	if !ok || query != "weather HCM" {
+		t.Errorf("tool call arguments.query: got %v, want %q", tc.Arguments["query"], "weather HCM")
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Errorf("finish_reason: got %q, want %q", resp.FinishReason, "tool_calls")
+	}
+}
+
+func TestExtractSSEJSON_MultipleToolCalls(t *testing.T) {
+	// Two tool calls in the same response, streamed with different indices.
+	body := []byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"weather\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/tmp/x\"}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+`)
+
+	result := extractSSEJSON(body)
+	if result == nil {
+		t.Fatal("extractSSEJSON returned nil")
+	}
+
+	p := &HTTPProvider{}
+	resp, err := p.parseResponse(result)
+	if err != nil {
+		t.Fatalf("parseResponse: %v", err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("tool_calls: got %d, want 2", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "web_search" {
+		t.Errorf("tool[0].name: got %q", resp.ToolCalls[0].Name)
+	}
+	if resp.ToolCalls[1].Name != "read_file" {
+		t.Errorf("tool[1].name: got %q", resp.ToolCalls[1].Name)
+	}
+}
+
+func TestExtractSSEJSON_NonStreamingInSSEEnvelope(t *testing.T) {
+	// Some providers wrap a non-streaming response in a single SSE data line.
+	body := []byte(`data: {"choices":[{"message":{"content":"Hello!","tool_calls":[]},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6}}
+
+`)
+
+	result := extractSSEJSON(body)
+	if result == nil {
+		t.Fatal("extractSSEJSON returned nil")
+	}
+
+	p := &HTTPProvider{}
+	resp, err := p.parseResponse(result)
+	if err != nil {
+		t.Fatalf("parseResponse: %v", err)
+	}
+	if resp.Content != "Hello!" {
+		t.Errorf("content: got %q, want %q", resp.Content, "Hello!")
+	}
+}
+
+func TestExtractSSEJSON_EmptyStream(t *testing.T) {
+	body := []byte(`data: [DONE]
+`)
+	result := extractSSEJSON(body)
+	if result != nil {
+		t.Errorf("expected nil for empty stream, got %s", result)
+	}
+}
+
+func TestExtractSSEJSON_ReasoningContent(t *testing.T) {
+	body := []byte(`data: {"choices":[{"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"reasoning_content":"... about this"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"The answer is 42"},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+`)
+
+	result := extractSSEJSON(body)
+	if result == nil {
+		t.Fatal("extractSSEJSON returned nil")
+	}
+
+	p := &HTTPProvider{}
+	resp, err := p.parseResponse(result)
+	if err != nil {
+		t.Fatalf("parseResponse: %v", err)
+	}
+	if resp.Content != "The answer is 42" {
+		t.Errorf("content: got %q", resp.Content)
+	}
+	if resp.ReasoningContent != "Let me think... about this" {
+		t.Errorf("reasoning_content: got %q", resp.ReasoningContent)
 	}
 }
 
