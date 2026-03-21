@@ -41,10 +41,10 @@ services:
   
   bge-m3:
     image: llama-cpp-server
-    build:
-      context: .
-      dockerfile: .devops/cpu.Dockerfile
-      target: server
+    # build:
+    #   context: .
+    #   dockerfile: .devops/cpu.Dockerfile
+    #   target: server
     ports:
       - "8081:8081"
     volumes:
