@@ -26,7 +26,7 @@ Sage integration tests: `docker compose -f docker-compose.test.yml up -d sage-te
 
 Entry point: `cmd/picoclaw/main.go` (CLI commands: `onboard`, `agent`, `gateway`, `status`, `cron`, `skills`, `version`).
 
-Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector + prompt leak guard), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription), `logger/` (structured logging with levels + JSON file output), `media/` (media file lifecycle + scoped registration + TTL-based GC), `utils/` (string helpers e.g. safe Unicode truncation).
+Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FTS5, knowledge graph), `mcp/` (Model Context Protocol adapter + client), `providers/` (OpenAI-compatible LLM abstraction), `tools/` (tool interface + implementations), `channels/` (multi-channel messaging), `bus/` (async message routing), `config/` (JSON config + env overrides), `secrets/` (ChaCha20 encryption), `session/` (file-based persistence), `skills/` (markdown SKILL.md system), `cron/` (scheduled jobs), `security/` (prompt guard + leak detector + prompt leak guard), `heartbeat/` (periodic prompts), `cost/` (usage tracking + budgets), `voice/` (Groq Whisper transcription), `logger/` (structured logging with levels + JSON file output), `media/` (media file lifecycle + scoped registration + TTL-based GC), `utils/` (string helpers e.g. safe Unicode truncation).
 
 ## Key Gotchas
 
@@ -47,6 +47,8 @@ Core packages: `agent/` (multi-agent loop + orchestration), `memory/` (SQLite+FT
 - **Retention cleanup chain**: delete expired memories -> `CleanStaleRelations()` -> `CleanOrphanedEntities()`. All three steps required in order.
 - **Web search priority**: Ollama > Brave > DuckDuckGo (free fallback). All implement `web_search` tool name.
 - **Bootstrap files**: `context.go` loads AGENTS.md, SOUL.md, USER.md, IDENTITY.md from workspace (not TOOLS.md).
+### Sage Gotchas
+
 - **Sage API endpoints**: Deprecate uses `DELETE /v1/dashboard/memory/{id}` (sync soft-delete). Challenge endpoint (`POST /v1/memory/{id}/challenge`) is async on-chain consensus. There is no `/v1/memory/{id}/deprecate`.
 - **Sage replay detection**: Sage rejects duplicate request signatures within the same second. Client uses monotonic `lastTS` counter in `doSigned()` to ensure unique timestamps on rapid successive calls.
 - **Sage domain tags**: `listAll()` queries with `nil` domain tags (no filtering) to avoid missing memories stored under LLM-assigned custom topics. Never use hardcoded domain tag lists for recall.
