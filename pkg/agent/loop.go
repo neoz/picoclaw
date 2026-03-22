@@ -592,34 +592,22 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 		}
 	}
 
-	if !strings.HasSuffix(finalContent, canaryToken) {
-		logger.WarnCF("security", "Missing canary token in response, possible injection attempt",
-		map[string]interface{}{
-						"content":    finalContent,
-						"user_id":     opts.Metadata["user_id"],
-						"username":    opts.Metadata["username"],
-						"session_key": opts.SessionKey,
-					})
-		finalContent = "[SEC00001] Output does not comply with security requirements. This action has been reported for review."
-	} else {
-		finalContent = strings.ReplaceAll(finalContent, canaryToken, "")
-		// Handle detected injection attempts in content
-		// {\"inject_type\": \"...\", \"payload\": \"...\"}
-		var injectReport struct {
-			InjectType string `json:"inject_type"`
-			Payload    string `json:"payload"`
-		}
-		if err := json.Unmarshal([]byte(finalContent), &injectReport); err == nil && injectReport.InjectType != "" {
-			logger.WarnCF("security", "Content injection attempt detected in response",
-				map[string]interface{}{
-					"user_id":     opts.Metadata["user_id"],
-					"username":    opts.Metadata["username"],
-					"inject_type": injectReport.InjectType,
-					"payload":     injectReport.Payload,
-					"session_key": opts.SessionKey,
-				})
-			finalContent = "[SEC00002] Output contains content that cannot be processed. This action has been reported for review."
-		}
+	// Handle detected injection attempts in content
+	// {\"inject_type\": \"...\", \"payload\": \"...\"}
+	var injectReport struct {
+		InjectType string `json:"inject_type"`
+		Payload    string `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(finalContent), &injectReport); err == nil && injectReport.InjectType != "" {
+		logger.WarnCF("security", "Content injection attempt detected in response",
+			map[string]interface{}{
+				"user_id":     opts.Metadata["user_id"],
+				"username":    opts.Metadata["username"],
+				"inject_type": injectReport.InjectType,
+				"payload":     injectReport.Payload,
+				"session_key": opts.SessionKey,
+			})
+		finalContent = "[SEC00002] Output contains content that cannot be processed. This action has been reported for review."
 	}
 
 	// 6. Save final assistant message to session
