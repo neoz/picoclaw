@@ -49,8 +49,15 @@ async function main() {
     body: JSON.stringify(body),
   });
 
-  const data = await res.json();
+  const text = await res.text();
   console.log("\n← Status:", res.status);
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    console.error("SyntaxError: Failed to parse JSON. Raw response:\n", text);
+    return;
+  }
   console.log("← Response:", JSON.stringify(data, null, 2));
 }
 
