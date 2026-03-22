@@ -602,7 +602,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, inst *AgentInstance, opts
 					})
 		finalContent = "[SEC00001] Output does not comply with security requirements. This action has been reported for review."
 	} else {
-		finalContent = strings.TrimSuffix(finalContent, canaryToken)
+		finalContent = strings.ReplaceAll(finalContent, canaryToken, "")
 		// Handle detected injection attempts in content
 		// {\"inject_type\": \"...\", \"payload\": \"...\"}
 		var injectReport struct {
